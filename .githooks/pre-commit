@@ -1,0 +1,4 @@
+#!/bin/sh
+# Block commits that contain personal identifiers or credentials.
+# Enable once with: git config core.hooksPath .githooks
+exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tools/check-secrets.ps1" -Staged

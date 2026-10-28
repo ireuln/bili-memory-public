@@ -1,0 +1,105 @@
+name: PR checks
+
+# Machine first pass only: no writes to the repo, no secrets, no network calls
+# beyond checking out this PR. A red run means "a human must read this diff
+# before merging", not "reject" - see docs/PR审查清单.md.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (generic rules only)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # .secret-patterns is local-only and gitignored, so CI runs the
+          # generic half of the scanner. Personal identifiers are checked on
+          # the author's machine before pushing.
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check-secrets.ps1
+          if ($LASTEXITCODE -ne 0) { Write-Host 'secret scan failed'; exit 1 }
+          Write-Host 'secret scan: clean'
+
+      - name: Encoding check (BOM vs Chinese text)
+        shell: powershell
+        run: |
+          # A BOM-less .ps1 containing Chinese is decoded as ANSI by PS 5.1 and
+          # fails with misleading parse errors. This catches it before users do.
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check-encoding.ps1
+          if ($LASTEXITCODE -ne 0) { Write-Host 'encoding check failed'; exit 1 }
+
+      - name: PowerShell syntax check
+        shell: powershell
+        run: |
+          $bad = 0
+          $files = Get-ChildItem -Path . -Recurse -Filter *.ps1 -File |
+                   Where-Object { $_.FullName -notmatch '\\\.git\\' }
+          foreach ($f in $files) {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $f.FullName, [ref]$null, [ref]$errs)
+            if ($errs -and $errs.Count -gt 0) {
+              $bad++
+              Write-Host ('PARSE ERROR: ' + $f.FullName)
+              $errs | ForEach-Object { Write-Host ('  ' + $_.Message) }
+            }
+          }
+          Write-Host ('parsed ' + $files.Count + ' file(s)')
+          if ($bad -gt 0) { exit 1 }
+
+      - name: No local-only files committed
+        shell: powershell
+        run: |
+          $bad = @()
+          $tracked = git ls-files
+          foreach ($f in @('config.json', 'backup-secret.json', 'status.json', '.secret-patterns')) {
+            if ($tracked -contains $f) { $bad += $f }
+          }
+          foreach ($line in $tracked) {
+            if ($line -match '\.(jsonl|7z|zip)$' -or $line -match '^notes/') { $bad += $line }
+          }
+          if ($bad.Count -gt 0) {
+            Write-Host 'these must stay out of the repo:'
+            $bad | Sort-Object -Unique | ForEach-Object { Write-Host ('  ' + $_) }
+            exit 1
+          }
+          Write-Host 'no local-only files tracked'
+
+      - name: Forbidden patterns (veto list)
+        shell: powershell
+        run: |
+          # The cheap half of docs/PR审查清单.md: things that should never
+          # appear in this repository at all.
+          # NOTE: -e is required because some patterns start with '-'; and this
+          # step must end with an explicit exit code, because git grep returns 1
+          # when there is no match (which Actions would treat as a failure).
+          $patterns = @(
+            'FromBase64String',
+            '-EncodedCommand',
+            'Invoke-Expression',
+            'RunAs'
+          )
+          $hits = 0
+          foreach ($pat in $patterns) {
+            $found = & git grep -n -I -e $pat -- '*.ps1' '*.cs' '*.cmd' 2>$null
+            if ($found) {
+              $hits++
+              Write-Host ('HIT [' + $pat + ']:')
+              $found | ForEach-Object { Write-Host ('  ' + $_) }
+            }
+          }
+          if ($hits -gt 0) {
+            Write-Host 'veto list hit - a human must review this before merging'
+            exit 1
+          }
+          Write-Host 'no veto-list pattern found'
+          exit 0

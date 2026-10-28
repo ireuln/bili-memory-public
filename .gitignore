@@ -1,0 +1,42 @@
+# 运行产物 —— 绝不入仓库
+config.json
+backup-secret.json
+status.json
+run.lock
+
+# 浏览器登录态：等价于账号凭据
+**/登录态/
+**/browser-profile/
+
+# 采集出来的个人数据
+**/观看记录/
+**/收藏备份/
+**/封面图/
+**/日志/
+*.jsonl
+
+# 备份包与密码提示
+*.7z
+解密密码提示.txt
+password-hint.txt
+
+# Windows / 编辑器噪音
+Thumbs.db
+desktop.ini
+desktop.ini
+.vscode/
+.idea/
+*.log
+*.err
+
+# workspace-specific session manifest
+.session.json
+
+# local secret pattern list (kept out of the repo on purpose)
+.secret-patterns
+
+# release artifacts
+dist/
+
+# compiled launchers
+bin/

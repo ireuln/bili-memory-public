@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root{
+  --ink:#17171c; --dim:#70707c; --line:#e9e9f0; --bg:#f6f6fa;
+  --accent:#fb7299; --accent2:#00a1d6;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans SC",system-ui,sans-serif;
+  padding:40px 16px 64px; line-height:1.6;
+}
+.card{
+  max-width:860px; margin:0 auto; background:#fff; border-radius:20px;
+  border:1px solid var(--line); box-shadow:0 12px 40px rgba(20,20,40,.07); overflow:hidden;
+}
+.top{
+  padding:36px 40px 28px;
+  background:linear-gradient(135deg,#fff6f9 0%,#fff 55%,#f4fbff 100%);
+  border-bottom:1px solid var(--line);
+}
+.kicker{font-size:12.5px;letter-spacing:.14em;color:var(--dim)}
+h1{font-size:33px;line-height:1.25;margin:10px 0 6px;font-weight:800;letter-spacing:-.01em}
+.lead{color:var(--dim);font-size:15px;margin:0}
+.hero{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.metric{background:#fff;padding:20px 22px}
+.metric b{display:block;font-size:30px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.metric b small{font-size:14px;font-weight:600;color:var(--dim);margin-left:2px}
+.metric span{font-size:12.5px;color:var(--dim)}
+section{padding:26px 40px;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+h2{font-size:12.5px;letter-spacing:.12em;color:var(--dim);margin:0 0 15px;font-weight:700}
+.hl-title{font-size:19px;font-weight:700;margin:0 0 4px;line-height:1.4}
+.hl-meta{font-size:13.5px;color:var(--dim)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) 150px 62px;align-items:center;gap:14px;padding:6px 0}
+.nm{font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{height:8px;background:#f1f1f6;border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),#ff9ab5)}
+.bar.t i{background:linear-gradient(90deg,var(--accent2),#5cc8e8)}
+.val{font-size:13px;color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+.covers{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.covers img{width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:8px;display:block;background:#f1f1f6}
+.foot{padding:18px 40px 24px;color:var(--dim);font-size:12.5px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+@media(max-width:640px){
+  .hero{grid-template-columns:repeat(2,1fr)}
+  h1{font-size:25px}
+  section,.top,.foot{padding-left:22px;padding-right:22px}
+  .row{grid-template-columns:minmax(0,1fr) 70px 54px}
+  .covers{grid-template-columns:repeat(3,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top">
+    <div class="kicker">BILIBILI · LOCAL ARCHIVE · {{PERIOD}}</div>
+    <h1>{{HEADLINE}}</h1>
+    <p class="lead">{{LEAD}}</p>
+  </div>
+  <div class="hero">
+    <div class="metric"><b>{{M_HOURS}}<small>h</small></b><span>累计观看</span></div>
+    <div class="metric"><b>{{M_COUNT}}</b><span>视频条数</span></div>
+    <div class="metric"><b>{{M_COMP}}<small>%</small></b><span>平均完成度</span></div>
+    <div class="metric"><b>{{M_DAYS}}</b><span>有记录的天数</span></div>
+  </div>
+  <!--HIGHLIGHT:BEGIN-->
+  <section>
+    <h2>看得最久的一条</h2>
+    <p class="hl-title">{{HL_TITLE}}</p>
+    <div class="hl-meta">{{HL_UP}} · {{HL_META}}</div>
+  </section>
+  <!--HIGHLIGHT:END-->
+  <!--TOPUP:BEGIN-->
+  <section>
+    <h2>时间花在谁身上</h2>
+    {{TOPUP_ROWS}}
+  </section>
+  <!--TOPUP:END-->
+  <!--TAGS:BEGIN-->
+  <section>
+    <h2>分区分布</h2>
+    {{TAG_ROWS}}
+  </section>
+  <!--TAGS:END-->
+  <!--COVERS:BEGIN-->
+  <section>
+    <h2>这期的封面墙</h2>
+    <div class="covers">{{COVERS}}</div>
+  </section>
+  <!--COVERS:END-->
+  <div class="foot">
+    <span>{{FOOTER}}</span>
+    <span>{{GENERATED}}</span>
+  </div>
+</div>
+</body>
+</html>

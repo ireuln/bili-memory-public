@@ -1,0 +1,99 @@
+{
+  "DataRoot": "D:\\bili-archive",
+  "BrowserExe": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  "ColdBackup": "D:\\bili-backup",
+  "CoverWidth": 320,
+  "BackupEncrypt": false,
+  "UiLanguage": "zh-CN",
+  "LogLevel": "normal",
+  "Sound": "soft",
+  "HeatEnabled": true,
+  "HeatMaxRows": 5000,
+  "EnrichMax": 300,
+  "EnrichDelayMs": 600,
+  "FollowTimeMax": 0,
+  "SevenZip": "C:\\Program Files\\7-Zip\\7z.exe",
+  "BackupSubdir": "bili-backup",
+  "PasswordHintFile": "解密密码提示.txt",
+  "PasswordHintText": "解压密码请见密码管理器",
+  "ShortcutName": "B印象-最新备份.lnk",
+  "TrayShortcutName": "B印象托盘.lnk",
+  "Automation": {
+    "Startup": "none",
+    "History": "scheduled",
+    "Favorites": "scheduled",
+    "Follows": "scheduled",
+    "Backup": "scheduled",
+    "BackupCold": "manual"
+  },
+  "WorkspaceFiles": ["AGENTS.md"],
+  "LowPriorityFolders": [],
+  "FolderPriority": [],
+  "FolderWeight": [
+    { "match": "*", "weight": 1 },
+    { "match": "example-skip", "weight": 0 },
+    { "match": "example-core", "weight": 3 }
+  ],
+  "BackupTargets": [
+    { "Path": "D:\\bili-backup", "Kind": "primary" }
+  ],
+  "Dirs": {
+    "History": "观看记录",
+    "Fav": "收藏备份",
+    "Cover": "封面图",
+    "Profile": "登录态\\浏览器配置",
+    "Log": "日志",
+    "Follow": "关注",
+    "Dms": "私信",
+    "Share": "分享",
+    "Download": "下载",
+    "Heat": "热度",
+    "Detail": "详情"
+  },
+  "Drafts": {
+    "dir": "草稿",
+    "maxChars": 120,
+    "shareLabel": "[分享] ",
+    "contextTurns": 20
+  },
+  "Share": {
+    "Headline": "这段时间，我在 B 站花了 {0} 小时",
+    "Lead": "{0} 条观看记录，{1} 天有打开，平均看完 {2}%。",
+    "Empty": "这段时间没有可用的观看记录。",
+    "RedactedTitle": "（标题已隐去）",
+    "UnknownUp": "（未署名 UP）",
+    "NoHighlight": "（本段没有可统计的条目）",
+    "Footer": "数据来自本地归档，不联网、不含私信。"
+  },
+  "Text": {
+    "masterFile": "收藏总表.jsonl",
+    "mdSummary": "- 条目：{0}　失效：{1}　最后更新：{2}",
+    "mdHeader": "| # | 标题 | UP 主 | 时长 | 收藏时间 | 状态 | 链接 |",
+    "mdSep": "|---|---|---|---|---|---|---|",
+    "stateInvalid": "已失效",
+    "stateOk": "正常",
+    "linkText": "链接",
+    "progressFile": "进度.json",
+    "watchLaterFile": "稍后观看.jsonl",
+    "dmsSessionsFile": "会话.jsonl"
+  },
+  "Tray": {
+    "okPrefix": "B印象",
+    "running": "正在采集…",
+    "failed": "上次失败",
+    "unknown": "尚未运行",
+    "menuHistory": "立即采集观看记录",
+    "menuFav": "立即采集收藏夹",
+    "menuFollow": "刷新关注分组",
+    "menuReport": "生成统计报告",
+    "menuShare": "生成分享卡片",
+    "menuBackup": "立即生成备份",
+    "menuCold": "生成纯文本冷备份",
+    "menuOpen": "打开归档文件夹",
+    "menuLog": "查看最新日志",
+    "menuHelp": "打开帮助文档",
+    "menuSettings": "详细功能与设置",
+    "menuUpdate": "检查更新",
+    "menuExit": "退出"
+  }
+}

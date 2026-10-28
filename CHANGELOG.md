@@ -1,0 +1,230 @@
+# Changelog
+
+## v0.1.1 — 2026-10-28
+
+### 变更
+
+- 文档与发布包一致性清理；无功能变更。
+- 构建脚本不再依赖具体文件名的排除逻辑。
+
+## Unreleased
+
+### 新增
+
+- **关注时间 `follow_time`**：`-Follow` 时顺带记录"你什么时候关注的这个人"。批量接口不返回该值，只能逐个查 `/x/relation?fid=`，所以**默认关闭**（`FollowTimeMax: 0`）；开启后每次最多补 N 人，已补过的跳过
+- **分享卡片输出兜底**：数据目录不可写时（杀软拦截常见），自动改写到工具目录 `out\<周期>` 并在输出里说明；`-Open` 改为打开文件夹并选中 `card.png`，不再依赖默认看图程序
+- `tools/check-encoding.ps1` + CI 关卡：含中文的 `.ps1` 必须有 UTF-8 BOM，否则 PS 5.1 按 GBK 解析会报出与真因无关的语法错误
+
+### 修复
+
+- `SettingsForm`（`B印象.exe`）读子进程输出用默认 ANSI 解码，中文错误信息在弹窗里全是乱码；现统一按 UTF-8 读取
+- 入口脚本统一设置 `[Console]::OutputEncoding` / `$OutputEncoding` 为 UTF-8，父子进程之间不再出现乱码
+- 数据目录不可写时不再抛 `UnauthorizedAccessException`（改为可写性探测 + 兜底目录）
+
+### 新增（更早的未发布改动）
+
+- **收藏热度入表**：收藏总表新增 `play` / `danmaku` / `fav_count` / `stats_at` 四个字段——这些数在收藏列表接口的同一个响应里就有，**不增加任何请求**
+- **热度快照** `<DataRoot>/热度/stats.jsonl`：一天一条、按 `(bvid, 日期)` 去重、原子写入，可据此画"播放量随时间"的曲线。配置项 `HeatEnabled`（默认开）与 `HeatMaxRows`（默认 5000，防体积膨胀）
+- **收藏夹权重 `FolderWeight`**：用规则替代写死的夹名——`0` = 默认不采、`1` = 普通、`2`/`3` = 优先刷新（权重高的先进 `-Enrich` 队列）。示例配置不再包含任何具体夹名
+- **详情补全 `-Enrich`**：逐条查 `view/detail`，补简介全文、UP 头像、8 个统计数、**源分辨率**、**自动识曲歌名**（`tag_type="bgm"`）。默认配额 300 条/次、间隔 600 ms，按 `enriched_at` 轮转覆盖全库；`EnrichMax` / `EnrichDelayMs` 可调
+- `docs/备份到别处.md`：把备份目标换成 Syncthing / 坚果云 / rclone 的具体改法，
+  含"备份失败就别上传"的包装脚本示例
+- `docs/功能清单.md`：公开前盘点——已有能力、可扩展项（附代价与风险）、明确不做的事
+- README 新增「关于你的权利」：个人使用的边界、服务条款与著作权的区别、不对抗承诺
+- `docs/demo/`：三张**合成数据**演示图（卡片 / 查询 / 报告）与生成说明，README 已引用
+- `query.ps1 -OutList <path> [-UrlFormat]`：导出一行一个 id 的纯清单，交给外部下载器
+  （Evolved / BBDown / yt-dlp）。至此"选片 → 外部下载"的闭环成了一个参数。
+- `docs/自动化接口.md`：给其他 AI 的扩展指引——稳定接口表、三条硬约束、
+  四个配方骨架（关键词 / 分P / 合集 / 同UP）、外部下载器接入方式与验收清单
+  - 配方**只给骨架不实现**：主体程序保持"只读取数"，会改变外部状态的动作不进本仓
+- `docs/第三方代码政策.md`：引入他人代码的三道门槛（许可明确且兼容 GPL-3.0、
+  不进主体程序、两处署名）、实测许可清单、红区名单
+- 新增 `docs/致谢.md`：只记**实际引入**的代码，当前为零
+- `docs/风险与合规声明.md` 补“已有先例”：`SocialSisterYi/bilibili-API-collect` 于
+  2026-01-28 收到 B 站律师函后删库停维，并据此限定了不进入发布范围的组件边界
+- `docs/风险与合规声明.md` 新增“功能暴露面分级”：按功能模块标注风险级别，并记录
+  发布前的边界复核结论
+- **公开就绪化（第一批）**：README 移除下载章节，改为“本工具不提供下载”；`自动化接口.md`
+  增加“参数细节不展开”的约定与症状表（`-352` / `-403` / `v_voucher` 各代表什么），
+  4.4 节改成只写目标与症状、不给参数；`AI-交接说明.md` 的不可用接口表同步收窄
+
+### 新增
+
+- **提示音可换**：`config.json -> "Sound"`（`soft` / `system` / `off`，默认 `soft`），
+  设置页「计划与设置」也有下拉框，旁边有**「试听提示音」**按钮。
+  `soft` 用 `assets\chime-soft.wav`：**低频**两击（196 Hz → 261.6 Hz，最高泛音 ~590 Hz，
+  没有刺耳的高频）、380 ms、峰值 -12 dBFS。
+  - 实测数据（设备峰值表）：第一版 200 ms / -21 dBFS 只有 **0.028**，被背景音盖住；
+    现版 **0.250**，与用作参照的 1 kHz 测试音一致。再低就听不见了，这是下限。
+  - 「试听提示音」按**下拉框当前选择**播放（柔和播自己的、系统播 `SystemSounds.Asterisk`、关闭则不出声），
+    改了档位立即生效，不需要重启托盘。
+  - **代价**：`system` 走系统弹窗（有图标、有系统音）；`soft` 用自绘弹窗，图标保留但没有系统音。
+- 新增 `src\UiNotice.cs`：14 处 `MessageBox` 统一走 `UiNotice.Show/Ask`，按 `Sound` 决定图标与声音。
+- **数据速览卡片升级**：顶部加状态带——运行中琥珀色「正在采集：<任务> · 已用 mm:ss」并每秒刷新；
+  成功绿、失败红并显示时间。**任务开始自动弹出**（挂 8 秒，避免刚出现就被失焦关掉），
+  结束后保留 4 秒再自动关闭。卡片高度 188 → 214，数字区整体下移。
+- **可读性**：柔和模式改用自绘对话框 `src\NoticeDialog.cs`（11 pt、保留图标、正文自动换行、按钮 104×36、确认框默认停在“取消”）；设置窗口整体 9 pt → 10 pt，行距、下拉框与按钮都加宽。
+
+### 修复
+
+- **同时起多个任务时“没反馈 / 分不清”**：原来只有 `status.json` 一个槽位，谁最后启动就覆盖谁；第二个任务又被单实例锁直接拒掉，连提示都没有。
+  现在：①按**任务组**分锁——采集类（观看/收藏/关注）仍互斥（共用一个浏览器配置），备份类（完整/冷备份）单独一把锁，可与采集**并行**；
+  ②状态也分开写（`status.json` / `status-backup.json`），备份完成不会覆盖采集状态；
+  ③卡片**一行一个在跑任务**（任务名 + 已用时间），最多三行，卡片高度随之变化；
+  ④点被占用的任务会弹提示说明“谁在跑、已用多久、为什么没启动”。
+- **卡片空闲时每秒重绘**：1 秒定时器原来无论有没有任务都在 `Invalidate()`。现在只在有任务时刷新时钟，
+  进程扫描降到每 5 秒一次，空闲时定时器直接停掉。
+- **卡片没有关闭按钮、会一直挂在屏幕上**：自绘卡片原来只能“点别处”关闭，自动弹出时还钉住 8 秒，看起来像关不掉的 bug。现在右上角有 **×**（Esc 同理），实测点击后立即消失。
+- **`run-task.ps1` 可能在子进程结束后仍不退出**：状态永远停在 `running`、`run.lock` 不释放，之后每次采集都被判“已在运行”挡掉。给 `finally` 加兜底——退出时若状态仍是 running，强制写终态失败并释放锁。托盘同时加**僵尸判定**：状态说 running 但找不到 run-task 进程时，卡片显示「上次运行未正常结束」。
+
+- **柔和提示音实际不发声**：`SoundPlayer.Play()` 是异步的，`using` 立刻 Dispose 把播放器拆了，一个采样都没送出去。改为静态持有 + 先 `Load()` 再 `Play()`。
+- **「切换到 Windows 系统音」看起来无效**：三个原因叠加——（1）`UiNotice.Mode` 把结果缓存成静态字段，
+  同一进程里改完配置也不重读；（2）「试听」按钮不看下拉框，永远播我们的音；（3）改了档位但没点“保存设置”。
+  现在：模式每次现读、试听按当前选择播放、保存后即时生效。
+- **自绘弹窗第一版把正文截断**：未挂到窗体上的 `Label` 还是 9 pt，按 9 pt 量、按 11 pt 画；改为先赋字体再用 `TextRenderer.MeasureText` 量。
+- **托盘“详细功能与设置”点了就崩**：`tray.ps1` 里的 `'B印象.exe'` 是非 ASCII 字面量，
+  而脚本没有 UTF-8 BOM，PowerShell 5.1 按 ANSI 代码页读取后得到 `B鍗拌薄.exe`，
+  `Start-Process` 抛 `CmdletInvocationException: 系统找不到指定的文件`，弹 .NET 的 JIT 调试对话框。
+  两处修：①启动器改为**按目录动态解析** exe（不再写死中文名）；
+  ②`build-release.ps1` 新增**编码守卫**——含非 ASCII 的 `.ps1` 自动补 BOM。
+- **新用户第一次点“生成统计报告”必崩**：`report.ps1` 假设 `config.json` 有 `Report` 段，
+  而 `config.example.json` 并没有，于是 `$null.PSObject.Properties[...]` 抛
+  `Cannot index into a null array`。已加父级判空。
+- **`selftest.ps1` 一直在骗人**：`Invoke-Child` 的参数名用了自动变量 `$Args`，
+  参数永远为空，所有开关（含 `-Json`）都没传给子进程，报告自检长期假通过。改名 `$ArgText`。
+- 托盘菜单项全部包进 `Invoke-Safe`：任何一项出错只弹消息框并写日志，不再炸出未处理异常。
+
+### 变更
+
+- **双击托盘图标**改为弹出「数据速览」卡片（累计观看 / 本月 / 收藏 / 近 7 天与活动天数 /
+  失效数 / 占用），实时从本地文件统计；「查看最新日志」移到右键菜单。
+- **右键菜单重组**：分采集、产出、备份、查看四组，**设置独立成子菜单**（加粗 + 分隔线），
+  与“立即采集”这类长任务隔开，减少误点。
+- 首次安装改为**中文 GUI 窗口**（数据/备份目录、托盘自启、语言），不再弹命令行；
+  启动器带完整性校验（`SHA256SUMS.txt` + `verify-files.ps1`），缺失/被隔离会中文列出。
+- 托盘新增“详细功能与设置”：分页 GUI（常用功能 / 计划与设置 / 诊断与帮助），
+  可直接改自动化、语言、日志级别并应用计划任务。
+- 新增日志：`config.json -> LogLevel`（`normal` / `debug`）；应用日志写
+  `<DataRoot>\日志\app-YYYYMMDD.log`，启动器/批处理/卸载器写 `%TEMP%\bili-memory-logs\`；
+  新增 [`docs/日志与排障.md`](docs/日志与排障.md)（含火绒误报处理）。
+- `B印象.exe` 不再依赖 `start.cmd`：直接启动 `tray.ps1`（首次仍是 `setup.ps1`）；
+  启动器/卸载器带日志，`start.cmd` 保留为命令行回退。
+- 托盘右键扩充：刷新关注、生成报告、生成分享卡片、纯文本冷备份、打开帮助、
+  检查更新；托盘仍只放高频入口，完整命令见 [`docs/功能地图.md`](docs/功能地图.md)。
+- 新增 [`docs/运行依赖.md`](docs/运行依赖.md)：干净 Win10/11 的自带组件、
+  7-Zip 可选、受限系统与卸载说明；`selftest.ps1` 增加 PowerShell/.NET/
+  `Compress-Archive`/`ScheduledTasks`/`cmd.exe`/WinForms 检查。
+- 卸载保护：检测 `run.lock` 与正在跑的采集/备份；运行中**不删 `DataRoot`**，
+  移除任务/快捷方式后提示稍后重跑。
+- 新增 `B印象.exe` 与 `B印象-卸载.exe`（C# 薄启动器，源码 `src\`；`build-exe.ps1` 编译）：
+  双击启动，卸载入口也图形化；EXE 未签名，SmartScreen 可能提示。
+- 新增 `check-update.ps1`：只读 GitHub releases API 检查版本，不下载、不替换；
+  `-Quiet` 只返回退出码（0 最新 / 1 有新版 / 2 检查失败）。自动更新暂不做，原因见文档。
+- 新增 `build-release.ps1` 与 `version.json`：生成便携发布包
+  `dist\bili-memory-<version>.zip`（含 `start.cmd`、文档、`BUILD-INFO.txt`；不含配置/凭据/数据）；
+  新增 [`docs/打包与移植.md`](docs/打包与移植.md)（支持矩阵、移植点、重打包规则、更新链接）。
+- 新增 `start.cmd`：双击启动；首次自动进 `setup.ps1`，之后启动托盘。
+- 界面语言可切换：`config.json -> UiLanguage`（`zh-CN` / `en-US`），语言包在
+  `lang\*.json`，启动时只合并 `Tray` / `Share` / `Drafts.shareLabel` 显示文案，
+  不改数据目录与文件名；`setup.ps1 -UiLanguage en-US` 可直接指定。
+- 备份新增 `-Format auto|zip|7z`：国产/加壳压缩软件不认 7z 时可强制 ZIP；
+  备份轮换改为精确正则 `bili-archive-YYYYMMDD-HHMM.(7z|zip)`，不会误删同名前缀的用户文件。
+- 新增 [`docs/压缩软件兼容性.md`](docs/压缩软件兼容性.md) 与
+  [`docs/安装足迹与删除安全.md`](docs/安装足迹与删除安全.md)：列出写入路径、删除边界与兼容性。
+- 安全审计：修掉调试入口的 JS 字符串注入（限制 http(s) + 转义）与
+  `uninstall.ps1` 递归删除的路径边界；新增 [`docs/安全审计.md`](docs/安全审计.md)
+  并补了本地维护笔记中的投诉应对流程（不随仓库发布）。
+- 新增 `NOTICE.md`（版权、与平台无关联、免责、投诉、不支持用途）与 `CONTRIBUTING.md`
+  （GPL-3.0 贡献授权、DCO、保密要求）；README 许可段补 Copyright 与无关联声明。
+- **手动备份先弹窗确认**：`backup-package.ps1` 在打包前显示文件数、体积与预计时间；
+  点"否"不写任何文件。计划任务经 `run-task.ps1 -Yes` 跳过弹窗，不会卡住。
+- 新增 `uninstall.ps1`：先打印删除范围，再逐项询问；`-Check` / `-DryRun` 只报告不改动，
+  `-RemoveData` / `-RemoveBackups` 供非交互使用；删完列出残留与需手动删除的工具文件夹。
+- 备份不再强制 7-Zip：找不到 7-Zip 时自动用 Windows 自带 `Compress-Archive` 生成 `.zip`
+  （不能加密）；`-Encrypt` 仍要求 7-Zip。新增 [`docs/卸载与残留.md`](docs/卸载与残留.md)。
+- 新增 `selftest.ps1`（只读自检：配置/浏览器/7z/目录/query/report/备份目标）与
+  `docs/测试清单.md`（按顺序的真实测试步骤与预期）。
+- 新增 `docs/新用户旅程.md`：真人/AI 两条发现路径、耗时与摩擦，以及推送前检查清单。
+- `setup.ps1` 自动寻找 7-Zip 并写入真实路径；找不到只警告，不阻塞安装。
+- **托盘开机自启改为安装时询问**：`setup.ps1` 新增 `start tray icon at logon? (y/n)`，
+  答案写入 `Automation.Startup`；默认不启用。
+- **每一项自动化都能单独选择“计划 / 手动”**：`config.json` 新增 `Automation`
+  （`Startup` 取 `tray|none`，其余取 `scheduled|manual`）。`register-task.ps1`
+  按配置注册/移除任务，支持 `-DryRun` 预览、`-Save` 持久化单项改动、
+  `-Unregister` 全部停掉；新增 `DSH-BiliCold` 与 `run-task.ps1 -Mode cold`。
+- GitHub 交流分流：新增 `SUPPORT.md`，issue 模板首行要求勾选
+  `To: human` / `To: ai` / `To: either`，README 增加“交流”一节。
+- **备份默认不加密**：`backup-package.ps1` 默认输出普通 `.7z`（双击可开），
+  加 `-Encrypt` 才启用 AES-256 + `-mhe=on`、读取 `backup-secret.json`。
+  未加密 = 明文的代价写进 README 首屏风险表与备份一节。
+- README 示例图改为缩略图（600/680/520 宽），统计报告折叠进 `<details>`；
+  原图保留在 `docs/demo/`，页面不再被超长截图占满。
+- 文档按读者拆分：新增 `docs/README.md`（真人 / AI / 合规 / 开发 四组索引）、
+  `docs/提示注入防护.md`、根目录 `SECURITY.md`；README 的文档区同步分组。
+- README 增加“它是什么 / 不是什么”：明确不是 B 站账号备份/迁移工具、
+  不是视频下载器、不是批量抓取他人内容的工具。
+
+### 改名
+
+- 项目对外中文名改为 **B印象**（README 标题、`llms.txt`、快捷方式名、托盘前缀）。
+  数据目录、备份目录、仓库名与计划任务名**未改**——改了会断掉已有数据与历史任务。
+
+- `drafts.ps1`：回复草稿脚手架（本地、永不发送）
+  - `-Queue`：只读会话元数据，列出"谁在等你回"，不碰任何正文
+  - `-Context -Talker <id>`：导出单个会话的上下文包（`.ctx.json` + 可读 `.md`）
+  - `-Validate -Talker <id>`：校验回填的 `.reply.json`（schema / 字数 / 占位符残留）
+  - 草稿目录随私信一起排除在备份与分享载荷之外
+- `query.ps1`：只读取数接口（不联网、不写 `DataRoot`）
+  - 按时间窗 / UP（名字或 UID）/ 分区 / 标题关键词 / BV 号 / 收藏夹筛选
+  - `-Source history|fav|both`，两种来源输出**同一套字段名**
+  - 默认 JSON 信封（`schema: 1`），`-Table` 给人看，`-OutFile` 落盘
+  - 排序 `-Sort time|completion|duration` + `-Ascending`
+- `share.ps1` + `share/` 模板：离线生成分享载荷（只生成、不发布）
+  - `card.png`：用采集器同一个 Edge 无头渲染，2× 分辨率、自动裁掉底部空白
+  - `card.html`：单文件总结卡片，封面 base64 内嵌，离线可开
+  - `post.txt`：现成文案
+  - `payload/`：`watch.jsonl` + `summary.json` + `manifest.json`（SHA256）+ `README.md`
+  - `-NoTitles` 隐去标题并自动关闭封面墙（封面图上印着标题）
+  - `-IncludeFavorites` / `-OnlyCard` / `-OnlyPack` / `-NoPng`
+  - 时间范围支持 `lastNd` / `yyyy-MM` / `yyyy` / 显式 `-From -To`
+
+### 修复
+
+- `report.ps1` 把 `稍后观看.jsonl` 当成观看记录统计：历史条数虚高一百余条（实际约 1,200），并凭空多出一个 1970-01-01 活跃日。现在按 `config.json` 的 `watchLaterFile`
+  显式排除，且跳过没有 `view_at` 的行。
+
+- `report.ps1`：失效清单的表头写的是“条数”，内容却是 BV 号（应用 `linkText`）；
+  标题括号里的数字是 `-Top` 上限而不是实际失效数，现在两个都给
+- 公开前的隐私处理：README / `llms.txt` / `能力说明` / 本文件里的真实条数（收藏、封面、
+  关注数）改成约数——精确数字配合 GitHub 账号本身就是指纹
+
+## v0.1.0 — 2026-10-27
+
+首个可用版本。
+
+### 新增
+
+- `collect.ps1`：基于 CDP 的采集器，凭据不出浏览器
+  - 观看记录（每日增量，带游标与跨次去重）
+  - 收藏夹（二十余个夹、失效时间线、320px 封面快照）
+  - 关注分组（特别关注 + 自建分组 + 近 30 天高频 UP）
+- `run-task.ps1`：调度执行器（单实例锁 / 硬超时 / 有限重试 / 让路不杀）
+- `backup-package.ps1`：AES-256 加密快照，双目标硬链接，内容未变不重打包
+- `report.ps1`：离线报告，支持 `-Json`
+- `setup.ps1`：首次安装，自动挑盘、生成配置
+- `tray.ps1`：托盘图标（多尺寸 ICO、4× 超采样、仅采集中脉冲）
+- `docs/`：数据契约、AI 交接说明、风险与合规声明
+- `llms.txt`：给 AI 助手的精简入口
+
+### 已知限制
+
+- 历史接口上限约 1200 条，必须每日采集
+- `is_finish` 字段不可用（1199 条中仅 1 条为 1）
+- 7z 密码通过命令行传递，同机进程理论上可读
+- 48px 图标由 128px 缩放而来，比例与 32px 不完全一致
+
+### 实测数据
+
+- 收藏 约 1.4 万条，其中 **约 15% 已失效**
+- 封面 约 1.2 万张 / 110 MB
+- 观看记录 1,201 条 / 9 天

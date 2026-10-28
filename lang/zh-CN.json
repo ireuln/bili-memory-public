@@ -1,0 +1,39 @@
+{
+  "Tray": {
+    "okPrefix": "B印象",
+    "running": "正在采集…",
+    "failed": "上次失败",
+    "unknown": "尚未运行",
+    "menuHistory": "立即采集观看记录",
+    "menuFav": "立即采集收藏夹",
+    "menuFollow": "刷新关注分组",
+    "menuReport": "生成统计报告",
+    "menuShare": "生成分享卡片",
+    "menuBackup": "立即生成备份",
+    "menuCold": "生成纯文本冷备份",
+    "menuOpen": "打开归档文件夹",
+    "menuLog": "查看最新日志",
+    "menuHelp": "打开帮助文档",
+    "menuSettings": "详细功能与设置",
+    "menuUpdate": "检查更新",
+    "menuExit": "退出",
+    "menuData": "数据速览",
+    "menuSettingsGroup": "设置",
+    "popupTitle": "数据速览",
+    "popupEmpty": "还没有数据，先采集一次",
+    "popupHint": "点击别处关闭",
+    "noLog": "还没有日志"
+  },
+  "Share": {
+    "Headline": "这段时间，我在 B 站花了 {0} 小时",
+    "Lead": "{0} 条观看记录，{1} 天有打开，平均看完 {2}%。",
+    "Empty": "这段时间没有可用的观看记录。",
+    "RedactedTitle": "（标题已隐去）",
+    "UnknownUp": "（未署名 UP）",
+    "NoHighlight": "（本段没有可统计的条目）",
+    "Footer": "数据来自本地归档，不联网、不含私信。"
+  },
+  "Drafts": {
+    "shareLabel": "[分享] "
+  }
+}

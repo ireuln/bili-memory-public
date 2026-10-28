@@ -1,0 +1,39 @@
+{
+  "Tray": {
+    "okPrefix": "B-Impression",
+    "running": "Collecting...",
+    "failed": "Last run failed",
+    "unknown": "Not run yet",
+    "menuHistory": "Collect watch history now",
+    "menuFav": "Refresh favorites now",
+    "menuFollow": "Refresh follows now",
+    "menuReport": "Build a report",
+    "menuShare": "Build a share card",
+    "menuBackup": "Build a backup now",
+    "menuCold": "Cold text backup now",
+    "menuOpen": "Open archive folder",
+    "menuLog": "View latest log",
+    "menuHelp": "Open help",
+    "menuSettings": "Features & settings",
+    "menuUpdate": "Check for updates",
+    "menuExit": "Exit",
+    "menuData": "Data at a glance",
+    "menuSettingsGroup": "Settings",
+    "popupTitle": "Data at a glance",
+    "popupEmpty": "No data yet - run a collection first",
+    "popupHint": "click elsewhere to close",
+    "noLog": "no log yet"
+  },
+  "Share": {
+    "Headline": "This period, I spent {0} hours on Bilibili",
+    "Lead": "{0} watch records, active on {1} days, average completion {2}%.",
+    "Empty": "No watch records in this period.",
+    "RedactedTitle": "(title hidden)",
+    "UnknownUp": "(unknown uploader)",
+    "NoHighlight": "(no items to summarize in this section)",
+    "Footer": "Data comes from the local archive; no network, no DMs."
+  },
+  "Drafts": {
+    "shareLabel": "[Share] "
+  }
+}
