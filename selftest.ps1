@@ -109,6 +109,27 @@ if ($data -and $cfg.Dirs) {
     }
 }
 
+# Optional content layer: absence is normal (it is filled by a tool of the owner's
+# choosing), presence is reported. Never fails the run.
+$contentDetail = 'not used (optional)'
+if ($data) {
+    $contentName = ''
+    if ($cfg.Dirs -and $cfg.Dirs.Content) { $contentName = [string]$cfg.Dirs.Content }
+    if (-not $contentName) { $contentName = 'content' }
+    $contentPath = Join-Path $data $contentName
+    if (Test-Path $contentPath) {
+        $cc = @(Get-ChildItem -LiteralPath $contentPath -Directory -ErrorAction SilentlyContinue).Count
+        $cb = [int64]0
+        foreach ($cf in @(Get-ChildItem -LiteralPath $contentPath -Recurse -File -ErrorAction SilentlyContinue)) {
+            $cb += [int64]$cf.Length
+        }
+        $contentDetail = ('' + $cc + ' item(s), ' + [math]::Round($cb / 1MB, 1) + ' MB')
+        if ($cb -ge 5GB) { $contentDetail = $contentDetail + ' [over 5 GB]' }
+        elseif ($cb -ge 1GB) { $contentDetail = $contentDetail + ' [over 1 GB]' }
+    }
+}
+Add-Check 'content layer (optional)' $true $contentDetail
+
 foreach ($s in @('collect.ps1', 'query.ps1', 'report.ps1', 'backup-package.ps1', 'run-task.ps1')) {
     Add-Check ('script ' + $s) (Test-Path (Join-Path $Root $s))
 }
