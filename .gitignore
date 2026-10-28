@@ -20,6 +20,9 @@ run.lock
 解密密码提示.txt
 password-hint.txt
 
+# 查询索引（派生数据，可删，每次重建）
+cache/
+
 # Windows / 编辑器噪音
 Thumbs.db
 desktop.ini

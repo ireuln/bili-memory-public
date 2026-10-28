@@ -69,6 +69,20 @@ if (Test-Path $masterPath) {
     }
 }
 
+# ---- optional content layer ---------------------------------------------
+# Measured, never pruned. Subtitles and notes are the part of an archive that
+# cannot be re-collected once a video is gone, so this script only reports size.
+$contentName = if ($Cfg.Dirs -and $Cfg.Dirs.Content) { [string]$Cfg.Dirs.Content } else { 'content' }
+$DirContent = Join-Path $DataRoot $contentName
+$contentItems = 0
+$contentBytes = [int64]0
+if (Test-Path $DirContent) {
+    $contentItems = @(Get-ChildItem -LiteralPath $DirContent -Directory -ErrorAction SilentlyContinue).Count
+    foreach ($cf in @(Get-ChildItem -LiteralPath $DirContent -Recurse -File -ErrorAction SilentlyContinue)) {
+        $contentBytes += [int64]$cf.Length
+    }
+}
+
 $sb = New-Object System.Text.StringBuilder
 function W { param([string]$Line) [void]$sb.AppendLine($Line) }
 
@@ -224,9 +238,17 @@ if ($Json) {
         avg_completion= $avgCompValue
         active_days   = $activeDaysValue
     }
+    # Only present when the layer exists, so default JSON stays byte-identical.
+    if ($contentItems -gt 0) {
+        $summary['content_items'] = $contentItems
+        $summary['content_mb'] = [math]::Round($contentBytes / 1MB, 1)
+    }
     $summary | ConvertTo-Json -Depth 4
 } else {
     Write-Host ('report: ' + $OutFile)
     Write-Host ('  history rows: ' + $hist.Count + '  favorites: ' + $favs.Count)
+    if ($contentItems -gt 0) {
+        Write-Host ('  content: ' + $contentItems + ' item(s), ' + [math]::Round($contentBytes / 1MB, 1) + ' MB (never pruned automatically)')
+    }
 }
 exit 0

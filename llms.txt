@@ -42,12 +42,31 @@ following daily into plain local files, and never uploads anything:
 ```powershell
 .\query.ps1 -From 2026-10-01 -Source both -Json
 .\query.ps1 -Up <uploader> -Sort completion -Limit 20 -Table
+.\query.ps1 -Text <keyword> -Source both -Limit 20 -Table
 ```
+
+`-Text` searches title, intro, uploader, partition and folder. The first run
+builds a compact index under `cache\` (derived, safe to delete); later text
+queries take about half a second on a library of roughly 14k rows. `-BuildIndex`
+and `-IndexInfo` manage it, `-NoIndex` forces the old full scan.
 
 It returns `{schema:1, matched, returned, items:[...]}` where history and
 favorite rows share one field set (`source`, `time`, `bvid`, `title`, `up`,
 `tag`, `folder`, `duration`, `progress`, `completion`, `completed`, `invalid`).
 Missing values are `null` or `''` -- branch on `source` only to know why.
+
+`-WithContent` adds one field, `has_content` (a content folder exists for that
+BV); `-ContentStats` reports that folder's item count, size and a reminder
+level. Neither changes default output.
+
+## Content layer (optional)
+
+`<DataRoot>/content/<BV>/` may hold `meta.json`, `subtitle.txt`,
+`danmaku-summary.json`, `sheet.jpg`, `notes.json` -- filled by **any** external
+tool the owner chooses. This repo defines the layout and reads it; it never
+fetches anything into it. Absent folder = feature off, nothing else changes.
+Size is measured and reported, never enforced, never deleted. Format:
+`docs/内容层.md`.
 
 ## Share payload (optional, offline)
 

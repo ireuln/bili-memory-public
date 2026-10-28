@@ -20,6 +20,9 @@
 
 ### 新增
 
+- **`query.ps1 -Text`**：标题/简介/UP/分区/收藏夹的子串检索。首次运行在工具目录 `cache\` 建派生索引（可删、可重建），之后约 0.5 秒；`-BuildIndex` / `-IndexInfo` 管理，`-NoIndex` 退回全表扫描。不加该开关时输出逐字节不变
+- **可选内容层**：`<DataRoot>\content\<BV>\` 下放字幕、弹幕摘要、九宫格图与结论；本仓库只定义格式和读法，不提供填充工具。`-WithContent` 给每行加 `has_content`，`-ContentStats` 报条目数/体积/级别，`report.ps1` 与 `selftest.ps1` 各加一行提示。格式见 `docs/内容层.md`
+
 - **关注时间 `follow_time`**：`-Follow` 时顺带记录"你什么时候关注的这个人"。批量接口不返回该值，只能逐个查询关注关系，所以**默认关闭**（`FollowTimeMax: 0`）；开启后每次最多补 N 人，已补过的跳过
 - **分享卡片输出兜底**：数据目录不可写时（杀软拦截常见），自动改写到工具目录 `out\<周期>` 并在输出里说明；`-Open` 改为打开文件夹并选中 `card.png`，不再依赖默认看图程序
 - `tools/check-encoding.ps1` + CI 关卡：含中文的 `.ps1` 必须有 UTF-8 BOM，否则 PS 5.1 按 GBK 解析会报出与真因无关的语法错误
