@@ -355,6 +355,39 @@ function Update-Tray {
     $script:lastRunning = $nowRunning
     if (-not $s) { Set-TrayColor 'grey' ($TxtOk + ': ' + $TxtUnknown); return }
     $state = [string]$s.state
+    # Speak up once when a run ends badly: otherwise the only clue is a red
+    # icon, and a failed collect looks exactly like "nothing happened".
+    # Dedupe by the run's start stamp, not by state: two failures in a row are
+    # fail -> fail, and a transition check would swallow the second one.
+    $failStamp = [string]$s.started
+    if ($state -ne 'ok' -and $state -ne 'running' -and $failStamp -and $script:lastFailStamp -ne $failStamp) {
+        # Set the stamp BEFORE the modal notice: MessageBox runs a nested message
+        # loop, so the timer re-enters Update-Tray while the box is open. Without
+        # this the same failure stacks dialog after dialog ("一直在弹").
+        $script:lastFailStamp = $failStamp
+        if (Get-Command Show-Notice -ErrorAction SilentlyContinue) {
+            # The stored message is a log tail ("ts [INFO] ... | ts [ERROR] ...").
+            # Show the last ERROR line only and translate the codes we know: a
+            # wall of log text reads like a crash, not like a reason.
+            $raw = [string]$s.message
+            $brief = ''
+            foreach ($ln in ($raw -split '\|')) { if ($ln -match '\[ERROR\]') { $brief = $ln.Trim() } }
+            if (-not $brief -and $raw -match '\[ERROR\]') { $brief = $raw }
+            if ([string]$s.exit -eq '124') { $brief = '超时：这次采集没在限定时间内完成（exit 124）。' }
+            elseif ($brief -match 'not_logged_in|code=-101') { $brief = '没有登录：先用浏览器登录 B 站，再点一次采集。' }
+            elseif ($brief -match 'timeout') { $brief = '超时：这次采集没有在限定时间内完成。' }
+            elseif (-not $brief -or $brief -match '\[INFO\]') {
+                # No ERROR line in the stored tail: say so instead of dumping
+                # INFO lines, which read like a crash report with no cause.
+                $brief = '这次采集没有成功，但日志里没有 ERROR 行（多半是进程被中断或超时）。详情见日志。'
+            }
+            elseif ($brief.Length -gt 120) { $brief = $brief.Substring(0, 120) + '…' }
+            if (-not $brief) { $brief = '这次采集没有成功，详情见日志。' }
+            Show-Notice '采集失败' $brief 'info'
+            $script:lastFailStamp = $failStamp
+        }
+    }
+    $script:lastState = $state
     if ($state -eq 'running') {
         Set-TrayColor 'amber' ($TxtOk + ': ' + $TxtRunning)
     } elseif ($state -eq 'ok') {
@@ -540,8 +573,8 @@ function Get-PopupHeight {
     param([int]$JobCount)
     # one band is the base layout; each extra running job adds a band
     $rows = [math]::Min($JobCount, 3)
-    if ($rows -lt 1) { return 214 }
-    return 214 + 38 * ($rows - 1)
+    if ($rows -lt 1) { return 222 }
+    return 222 + 38 * ($rows - 1)
 }
 
 function Get-ModeLabel {
@@ -575,8 +608,38 @@ function Get-ShortTime {
     try { return ([datetime]::ParseExact($Stamp, 'yyyy-MM-dd HH:mm:ss', $null)).ToString('HH:mm') } catch { return '' }
 }
 
+function Get-PopupPalette {
+    # Same tokens as the settings window: the card follows the Windows
+    # light/dark setting instead of being permanently dark.
+    $dark = $true
+    try {
+        $k = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -ErrorAction SilentlyContinue
+        if ($k -and $null -ne $k.AppsUseLightTheme) { $dark = ([int]$k.AppsUseLightTheme -eq 0) }
+    } catch { }
+    if ($dark) {
+        return [pscustomobject]@{
+            Card = [System.Drawing.Color]::FromArgb(22, 27, 34)
+            Title = [System.Drawing.Color]::FromArgb(230, 237, 243)
+            Label = [System.Drawing.Color]::FromArgb(139, 148, 158)
+            Num = [System.Drawing.Color]::FromArgb(240, 246, 252)
+            Dim = [System.Drawing.Color]::FromArgb(139, 148, 158)
+            Rule = [System.Drawing.Color]::FromArgb(48, 54, 61)
+            Dark = $true
+        }
+    }
+    return [pscustomobject]@{
+        Card = [System.Drawing.Color]::White
+        Title = [System.Drawing.Color]::FromArgb(31, 35, 40)
+        Label = [System.Drawing.Color]::FromArgb(110, 118, 129)
+        Num = [System.Drawing.Color]::FromArgb(15, 23, 42)
+        Dim = [System.Drawing.Color]::FromArgb(140, 146, 158)
+        Rule = [System.Drawing.Color]::FromArgb(225, 228, 234)
+        Dark = $false
+    }
+}
+
 function Show-DataPopup {
-    param([switch]$Auto)
+    param([switch]$Auto, [switch]$Hover)
     # Toggle: a second double-click closes the card instead of stacking one more.
     if ($script:popup -and -not $script:popup.IsDisposed) {
         if (-not $Auto) { $script:popup.Close(); return }
@@ -587,10 +650,15 @@ function Show-DataPopup {
     $script:popupSnap = $snap
     $script:popupState = $snap.State
     $script:popupShown = Get-Date
+    $script:nextRunText = ''
+    try {
+        $ti = Get-ScheduledTask -TaskName 'DSH-BiliHistory' -ErrorAction SilentlyContinue | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+        if ($ti -and $ti.NextRunTime) { $script:nextRunText = ([datetime]$ti.NextRunTime).ToString('MM-dd HH:mm') }
+    } catch { }
     $script:jobs = @(Get-RunningJobs)
     $script:popupJobCount = $script:jobs.Count
 
-    $w = 348
+    $w = 400
     $h = Get-PopupHeight $script:jobs.Count
     $f = New-Object System.Windows.Forms.Form
     $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -601,12 +669,29 @@ function Show-DataPopup {
     $f.Height = $h
     $f.BackColor = [System.Drawing.Color]::FromArgb(26, 19, 42)
 
-    $cursor = [System.Windows.Forms.Cursor]::Position
-    $area = [System.Windows.Forms.Screen]::FromPoint($cursor).WorkingArea
-    $x = $cursor.X - [int]($w / 2)
-    if ($x -lt $area.Left + 8) { $x = $area.Left + 8 }
-    if ($x + $w -gt $area.Right - 8) { $x = $area.Right - $w - 8 }
-    $y = $area.Bottom - $h - 10
+    # Place the card against whichever edge holds the taskbar, so it lands next
+    # to the tray icon for a bottom bar and for a vertical/horizontal one alike.
+    $scr = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+    $wa = $scr.WorkingArea
+    $bd = $scr.Bounds
+    $margin = 12
+    if ($wa.Right -lt $bd.Right) {            # vertical bar on the right
+        $x = $wa.Right - $w - $margin
+        $y = $wa.Bottom - $h - $margin
+    } elseif ($wa.Left -gt $bd.Left) {        # vertical bar on the left
+        $x = $wa.Left + $margin
+        $y = $wa.Bottom - $h - $margin
+    } elseif ($wa.Top -gt $bd.Top) {          # bar at the top
+        $x = $wa.Right - $w - $margin
+        $y = $wa.Top + $margin
+    } else {                                  # bar at the bottom (default)
+        $x = $wa.Right - $w - $margin
+        $y = $wa.Bottom - $h - $margin
+    }
+    if ($x -lt $wa.Left + 8) { $x = $wa.Left + 8 }
+    if ($y -lt $wa.Top + 8) { $y = $wa.Top + 8 }
+    if ($x + $w -gt $wa.Right - 4) { $x = $wa.Right - $w - 4 }
+    if ($y + $h -gt $wa.Bottom - 4) { $y = $wa.Bottom - $h - 4 }
     $f.Left = $x
     $f.Top = $y
 
@@ -616,11 +701,13 @@ function Show-DataPopup {
         $g = $e.Graphics
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+        $pal = Get-PopupPalette
+        $sender.BackColor = $pal.Card
         $s = $script:popupSnap
         $accent = Get-StateColor
         $cardRect = New-Object System.Drawing.RectangleF 0.5, 0.5, ($sender.Width - 1.5), ($sender.Height - 1.5)
         $card = New-RoundedPath -Rect $cardRect -Radius 10
-        $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(26, 19, 42))
+        $bg = New-Object System.Drawing.SolidBrush $pal.Card
         $g.FillPath($bg, $card)
         $border = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(150, $accent.R, $accent.G, $accent.B)), 1.2
         $g.DrawPath($border, $card)
@@ -630,12 +717,13 @@ function Show-DataPopup {
         $fLabel = New-Object System.Drawing.Font $fam, 8.25
         $fNum = New-Object System.Drawing.Font $fam, 16.5, ([System.Drawing.FontStyle]::Bold)
         $fSmall = New-Object System.Drawing.Font $fam, 8.25
-        $cTitle = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(236, 230, 248))
-        $cLabel = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(158, 150, 180))
-        $cNum = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(248, 241, 222))
-        $cDim = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(150, 142, 168))
+        $cTitle = New-Object System.Drawing.SolidBrush $pal.Title
+        $cLabel = New-Object System.Drawing.SolidBrush $pal.Label
+        $cNum = New-Object System.Drawing.SolidBrush $pal.Num
+        $cDim = New-Object System.Drawing.SolidBrush $pal.Dim
 
-        $g.DrawString(($TxtOk + ' · ' + $PopupTitle), $fTitle, $cTitle, 16, 12)
+        $g.FillEllipse((New-Object System.Drawing.SolidBrush $accent), 16, 17, 7, 7)
+        $g.DrawString($PopupTitle, $fTitle, $cTitle, 28, 12)
 
         # ---- status bands: one row per live job, so concurrent work is visible
         $st = Get-Status
@@ -719,23 +807,16 @@ function Show-DataPopup {
         }
         $shift = 38 * $extraBands
 
-        $cols = @(
-            @{ X = 16; Label = '累计观看'; Value = ('{0:N0}' -f $s.Watch) },
-            @{ X = 124; Label = '本月'; Value = ('{0:N0}' -f $s.WatchMonth) },
-            @{ X = 232; Label = '收藏'; Value = ('{0:N0}' -f $s.Fav) }
+        # 2x2 grid: the four numbers that answer "did it collect, and how much".
+        $cells = @(
+            @{ X = 16;  Y = 80;  Label = '累计观看'; Value = ('{0:N0}' -f $s.Watch) },
+            @{ X = 208; Y = 80;  Label = '本月';     Value = ('{0:N0}' -f $s.WatchMonth) },
+            @{ X = 16;  Y = 124; Label = '收藏';     Value = ('{0:N0}' -f $s.Fav) },
+            @{ X = 208; Y = 124; Label = '失效';     Value = ('{0:N0}' -f $s.FavInvalid) }
         )
-        foreach ($c in $cols) {
-            $g.DrawString($c.Label, $fLabel, $cLabel, $c.X, (88 + $shift))
-            $g.DrawString($c.Value, $fNum, $cNum, $c.X, (102 + $shift))
-        }
-
-        if ($s.Watch -eq 0 -and $s.Fav -eq 0) {
-            $g.DrawString($PopupEmpty, $fSmall, $cDim, 16, (150 + $shift))
-        } else {
-            $g.DrawString(('近 7 天 {0:N0} 条 · {1} 天有活动' -f $s.Watch7, $s.ActiveDays7), $fSmall, $cLabel, 16, (150 + $shift))
-            $invalidText = ('收藏失效 {0:N0}' -f $s.FavInvalid)
-            $iSize = $g.MeasureString($invalidText, $fSmall)
-            $g.DrawString($invalidText, $fSmall, $cLabel, ($sender.Width - 16 - $iSize.Width), (150 + $shift))
+        foreach ($c in $cells) {
+            $g.DrawString($c.Label, $fLabel, $cLabel, $c.X, ($c.Y + $shift))
+            $g.DrawString($c.Value, $fNum, $cNum, $c.X, ($c.Y + 14 + $shift))
         }
 
         $mb = $s.Bytes / 1MB
@@ -743,7 +824,48 @@ function Show-DataPopup {
         elseif ($mb -ge 10) { $sizeText = '{0:N0} MB' -f $mb }
         elseif ($mb -ge 1) { $sizeText = '{0:N1} MB' -f $mb }
         else { $sizeText = '{0:N0} KB' -f ($s.Bytes / 1KB) }
-        $g.DrawString($sizeText, $fSmall, $cDim, 16, (186 + $shift))
+
+        $rulePen = New-Object System.Drawing.Pen $pal.Rule, 1
+        $g.DrawLine($rulePen, 16, (168 + $shift), ($sender.Width - 16), (168 + $shift))
+        $rulePen.Dispose()
+
+        # Line 1: what happened last, and when the next automatic run is due.
+        $lastStateText = '未运行'
+        $lastTimeText = ''
+        if ($st) {
+            switch ([string]$st.state) {
+                'ok' { $lastStateText = '成功' }
+                'running' { $lastStateText = '运行中' }
+                default { $lastStateText = '失败' }
+            }
+            try { $lastTimeText = ([datetime]::ParseExact([string]$st.ended, 'yyyy-MM-dd HH:mm:ss', $null)).ToString('MM-dd HH:mm') } catch { $lastTimeText = '' }
+        }
+        # The status band above already says 失败/成功; this line only answers
+        # "when did it last run, and when does it run again".
+        $leftText = '上次 未运行'
+        if ($st -and [string]$st.state -eq 'running' -and $st.started) {
+            try { $leftText = '开始 ' + ([datetime]::ParseExact([string]$st.started, 'yyyy-MM-dd HH:mm:ss', $null)).ToString('MM-dd HH:mm') } catch { }
+        } elseif ($lastTimeText) { $leftText = '上次 ' + $lastTimeText }
+        $g.DrawString($leftText, $fSmall, $cLabel, 16, (176 + $shift))
+        $nextText = ''
+        if ($script:nextRunText) { $nextText = '下次 ' + $script:nextRunText }
+        if ($nextText) {
+            $nSize = $g.MeasureString($nextText, $fSmall)
+            $g.DrawString($nextText, $fSmall, $cLabel, ($sender.Width - 16 - $nSize.Width), (176 + $shift))
+        }
+
+        # Line 2: one of four facts, rotating every 6 s so the card stays small.
+        $favRate = 0.0
+        if ($s.Fav -gt 0) { $favRate = [double]$s.FavInvalid / [double]$s.Fav }
+        $rotate = @(
+            ('近 7 天 {0:N0} 条 · {1} 天有活动' -f $s.Watch7, $s.ActiveDays7),
+            ('归档 {0}{1}' -f $sizeText, $(if ($lastTimeText) { ' · 上次采集 ' + $lastTimeText } else { '' })),
+            ('失效 {0:N0} 条（占收藏 {1:P0}）' -f $s.FavInvalid, $favRate),
+            ('下次自动采集 {0}' -f $(if ($script:nextRunText) { $script:nextRunText } else { '未注册' }))
+        )
+        $rot = 0
+        try { $rot = [int]([math]::Floor(((Get-Date) - $script:popupShown).TotalSeconds / 6)) % $rotate.Count } catch { $rot = 0 }
+        $g.DrawString($rotate[$rot], $fSmall, $cDim, 16, (196 + $shift))
 
         # explicit close affordance: a card that just sits there with no button
         # reads as a bug even when clicking elsewhere dismisses it
@@ -794,10 +916,14 @@ function Show-DataPopup {
     $f.Add_FormClosed({
         $script:popup = $null
         if ($script:popupTimer) { $script:popupTimer.Stop(); $script:popupTimer = $null }
+        if ($script:rotTimer) { $script:rotTimer.Stop(); $script:rotTimer.Dispose(); $script:rotTimer = $null }
     })
     $script:popup = $f
     $script:popupWasRunning = $null
     $script:popupCloseAt = $null
+    # A hover card must not keep itself alive the way the job-started card does;
+    # the hover timer closes it once the pointer leaves the tray area.
+    $script:popupPinned = $false
     if ($Auto) {
         # A card that closes the moment focus moves is useless when it fires by
         # itself, so hold it for a few seconds before honouring focus loss.
@@ -805,7 +931,15 @@ function Show-DataPopup {
         $script:autoUnpinAt = (Get-Date).AddSeconds(8)
     }
     $f.Show()
-    $f.Activate()
+    # A preview used for a screenshot must not take focus from the user, and a
+    # hover card must not steal it from whatever the pointer is doing.
+    if ($PreviewSeconds -le 0 -and -not $Hover) { $f.Activate() }
+
+    # Repaint every 6 s so the rotating line changes while the card is open.
+    $script:rotTimer = New-Object System.Windows.Forms.Timer
+    $script:rotTimer.Interval = 6000
+    $script:rotTimer.add_Tick({ if ($script:popup -and -not $script:popup.IsDisposed) { $script:popup.Invalidate() } })
+    $script:rotTimer.Start()
 
     # Repainting only makes sense while a job runs (the clock moves); when the
     # card is opened idle there is nothing to animate.
@@ -872,7 +1006,18 @@ function Open-SettingsGui {
         Where-Object { $_.Name -notlike '*-*' } |
         Sort-Object Length -Descending |
         Select-Object -First 1
-    if ($exe) { Start-Process -FilePath $exe.FullName -ArgumentList '-settings'; return }
+    if ($exe) {
+        # Launch without the shell: Start-Process goes through Explorer, which
+        # raises "the publisher could not be verified" for an unsigned exe and
+        # turns a cancelled prompt into "the operation was canceled by the user".
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $exe.FullName
+        $psi.Arguments = '-settings'
+        $psi.WorkingDirectory = $Root
+        $psi.UseShellExecute = $false
+        [void][System.Diagnostics.Process]::Start($psi)
+        return
+    }
     Show-Notice $MenuSettings ('找不到启动器：' + (Join-Path $Root 'setup.ps1')) 'warn'
     Start-ScriptVisible 'setup.ps1'
 }
@@ -883,8 +1028,42 @@ function Open-HelpDoc {
         (Join-Path $Root 'docs\README.md'),
         (Join-Path $Root 'README.md')
     )
-    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { Start-Process notepad.exe $c; return } }
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) {
+            $name = [System.IO.Path]::GetFileName($c)
+            # Clicking help twice must reuse the window that is already open
+            # instead of stacking a second Notepad on top of the first.
+            $open = @(Get-Process notepad -ErrorAction SilentlyContinue |
+                      Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Contains($name) })
+            if ($open.Count -eq 0) { Start-Process notepad.exe $c }
+            return
+        }
+    }
     Start-Process explorer.exe (Join-Path $Root 'docs')
+}
+
+function Invoke-ScriptCaptured {
+    # Menu items that report a result (update check) run hidden and end in a
+    # dialog: a bare console full of script output is unreadable for the user.
+    param([string]$Script, [string]$Title, [string]$Extra = '')
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $ps
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $Root $Script) + '"'
+    if ($Extra) { $psi.Arguments = $psi.Arguments + ' ' + $Extra }
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $Root
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $p.StandardOutput.ReadToEnd()
+    $stderr = $p.StandardError.ReadToEnd()
+    $p.WaitForExit()
+    $text = (($stdout + "`r`n" + $stderr) -split "`r?`n" | Where-Object { $_.Trim() }) -join "`r`n"
+    if (-not $text) { $text = '（脚本没有输出）' }
+    $kind = if ($p.ExitCode -eq 0) { 'info' } else { 'warn' }
+    Show-Notice $Title $text $kind
 }
 
 function Open-LatestLog {
@@ -925,7 +1104,15 @@ $miOpen.add_Click({
 $miLog.add_Click({ Invoke-Safe { Open-LatestLog } $MenuLog })
 $miHelp.add_Click({ Invoke-Safe { Open-HelpDoc } $MenuHelp })
 $miSettings.add_Click({ Invoke-Safe { Open-SettingsGui } $MenuSettings })
-$miUpdate.add_Click({ Invoke-Safe { Start-ScriptVisible 'check-update.ps1' } $MenuUpdate })
+$miUpdate.add_Click({
+    Invoke-Safe {
+        if (-not (Test-Path (Join-Path $Root 'version.json'))) {
+            Show-Notice $MenuUpdate '缺少 version.json，无法检查更新。' 'warn'
+            return
+        }
+        Invoke-ScriptCaptured 'check-update.ps1' $MenuUpdate
+    } $MenuUpdate
+})
 $miExit.add_Click({
     try { Write-AppLog -Cfg $Cfg -Root $Root -Level info -Message 'tray exit' } catch { }
     if ($script:popup -and -not $script:popup.IsDisposed) { $script:popup.Close() }
@@ -935,6 +1122,86 @@ $miExit.add_Click({
 # Double-click now opens the data card; the log moved into the menu where it is
 # a deliberate choice rather than an accident of double-clicking.
 $tray.add_DoubleClick({ Invoke-Safe { Show-DataPopup } $MenuData })
+
+# A hover card must never sit on top of the tray menu: close it as soon as the
+# menu opens or the user presses a mouse button on the icon.
+$context.add_Opening({
+    try {
+        if ($script:popup -and -not $script:popup.IsDisposed -and -not $script:popupPinned) { $script:popup.Close() }
+        $script:hoverAt = $null
+    } catch { }
+})
+$tray.add_MouseDown({
+    try {
+        if ($script:popup -and -not $script:popup.IsDisposed -and -not $script:popupPinned) { $script:popup.Close() }
+        $script:hoverAt = $null
+    } catch { }
+})
+
+# --- hover: rest the pointer on the icon for 400 ms to open the card ---------
+# NotifyIcon has no leave event, so the card closes once the pointer has been
+# outside the notification area for 2 s.
+if (-not ('TrayHit' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class TrayHit {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct NID { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindow(string cls, string win);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string win);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("shell32.dll")] public static extern int Shell_NotifyIconGetRect(ref NID id, out RECT rect);
+}
+"@
+}
+
+# Exact own-icon rect first (Shell_NotifyIconGetRect): the tray cluster also
+# holds other applications' icons, and hovering any of those must not open us.
+function Get-TrayIconRect {
+    try {
+        $win = $null
+        $fld = [System.Windows.Forms.NotifyIcon].GetField('window', [System.Reflection.BindingFlags]'NonPublic,Instance')
+        if ($fld) { $win = $fld.GetValue($tray) }
+        if ($win -and $win.Handle -ne [IntPtr]::Zero) {
+            $id = New-Object TrayHit+NID
+            $id.cbSize = [uint32][System.Runtime.InteropServices.Marshal]::SizeOf($id)
+            $id.hWnd = $win.Handle
+            $id.uID = 1
+            $id.guidItem = [Guid]::Empty
+            $r = New-Object TrayHit+RECT
+            if ([TrayHit]::Shell_NotifyIconGetRect([ref]$id, [ref]$r) -eq 0) {
+                return [pscustomobject]@{ Left = $r.Left; Top = $r.Top; Right = $r.Right; Bottom = $r.Bottom }
+            }
+        }
+    } catch { }
+    return $null
+}
+function Get-TrayArea {
+    try {
+        $tb = [TrayHit]::FindWindow('Shell_TrayWnd', $null)
+        if ($tb -eq [IntPtr]::Zero) { return $null }
+        $h = [TrayHit]::FindWindowEx($tb, [IntPtr]::Zero, 'TrayNotifyWnd', $null)
+        if ($h -eq [IntPtr]::Zero) { $h = $tb }
+        $r = New-Object TrayHit+RECT
+        if (-not [TrayHit]::GetWindowRect($h, [ref]$r)) { return $null }
+        return [pscustomobject]@{ Left = $r.Left; Top = $r.Top; Right = $r.Right; Bottom = $r.Bottom }
+    } catch { return $null }
+}
+$script:hoverAt = $null
+$script:hoverOutAt = $null
+try {
+    $probe = Get-TrayIconRect
+    $probeText = 'null'
+    if ($probe) { $probeText = ('{0},{1},{2},{3}' -f $probe.Left, $probe.Top, $probe.Right, $probe.Bottom) }
+    Write-AppLog -Cfg $Cfg -Root $Root -Level debug -Message ('tray icon rect=' + $probeText)
+} catch { }
+$tray.add_MouseMove({
+    try {
+        if ($script:popup -and -not $script:popup.IsDisposed) { return }
+        if (-not $script:hoverAt) { $script:hoverAt = Get-Date }
+    } catch { }
+})
 
 function Start-Run {
     param([string]$Mode)
@@ -977,7 +1244,7 @@ function Start-Run {
 }
 
 $statusTimer = New-Object System.Windows.Forms.Timer
-$statusTimer.Interval = 15000
+$statusTimer.Interval = 5000
 $statusTimer.add_Tick({ Update-Tray })
 $statusTimer.Start()
 
@@ -992,8 +1259,57 @@ if (-not $NoAnimation) {
     $animTimer.Start()
 }
 
+# A failure that ended before this tray started is history, not news: without
+# this seed, every restart pops a "采集失败" box about an old run.
+$stSeed = Get-Status
+if ($stSeed) { $script:lastFailStamp = [string]$stSeed.started }
+
 Update-Tray
 
+$hoverTimer = New-Object System.Windows.Forms.Timer
+$hoverTimer.Interval = 150
+$hoverTimer.add_Tick({
+    try {
+        # Never pop over a context menu or while a button is held: the tray menu
+        # is TopMost-followed by the card, which used to cover it and eat clicks.
+        if ($context -and $context.Visible) { $script:hoverAt = $null; return }
+        if ([System.Windows.Forms.Control]::MouseButtons -ne [System.Windows.Forms.MouseButtons]::None) { $script:hoverAt = $null; return }
+        $rect = Get-TrayIconRect
+        if (-not $rect) { $script:hoverAt = $null; return }
+        $pt = [System.Windows.Forms.Cursor]::Position
+        $pad = 6
+        $inside = ($pt.X -ge ($rect.Left - $pad) -and $pt.X -le ($rect.Right + $pad) -and
+                   $pt.Y -ge ($rect.Top - $pad) -and $pt.Y -le ($rect.Bottom + $pad))
+        # Moving the pointer onto the card itself must keep it open, otherwise
+        # you cannot read it: treat the card rect as part of the hover target.
+        if (-not $inside -and $script:popup -and -not $script:popup.IsDisposed) {
+            try {
+                $pb = $script:popup.Bounds
+                if ($pt.X -ge $pb.Left -and $pt.X -le $pb.Right -and $pt.Y -ge $pb.Top -and $pt.Y -le $pb.Bottom) { $inside = $true }
+            } catch { }
+        }
+        if (-not $inside) {
+            $script:hoverAt = $null
+            if ($script:popup -and -not $script:popup.IsDisposed -and -not $script:popupPinned) {
+                if (-not $script:hoverOutAt) { $script:hoverOutAt = Get-Date }
+                elseif (((Get-Date) - $script:hoverOutAt).TotalMilliseconds -ge 2000) {
+                    $script:hoverOutAt = $null
+                    if ($script:popup -and -not $script:popup.IsDisposed) { $script:popup.Close() }
+                }
+            }
+        } else {
+            $script:hoverOutAt = $null
+            if (-not ($script:popup -and -not $script:popup.IsDisposed)) {
+                if (-not $script:hoverAt) { $script:hoverAt = Get-Date }
+                elseif (((Get-Date) - $script:hoverAt).TotalMilliseconds -ge 400) {
+                    $script:hoverAt = $null
+                    Show-DataPopup -Hover
+                }
+            }
+        }
+    } catch { }
+})
+$hoverTimer.Start()
 $form = New-Object System.Windows.Forms.Form
 $form.ShowInTaskbar = $false
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
