@@ -45,7 +45,7 @@ $uninstallName = 'B' + $prefix + '-' + [char]0x5378 + [char]0x8F7D + '.exe'  # å
 $tmpLauncher = Join-Path $OutDir '_launcher.exe'
 $tmpUninstall = Join-Path $OutDir '_uninstall.exe'
 
-& $csc /nologo /target:winexe /codepage:65001 /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /out:"$tmpLauncher" (Join-Path $Root 'src\Launcher.cs') (Join-Path $Root 'src\SettingsForm.cs') (Join-Path $Root 'src\UiNotice.cs') (Join-Path $Root 'src\NoticeDialog.cs')
+& $csc /nologo /target:winexe /codepage:65001 /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /out:"$tmpLauncher" (Join-Path $Root 'src\Launcher.cs') (Join-Path $Root 'src\SettingsForm.cs') (Join-Path $Root 'src\Theme.cs') (Join-Path $Root 'src\UiNotice.cs') (Join-Path $Root 'src\NoticeDialog.cs')
 if ($LASTEXITCODE -ne 0) { throw ('launcher compile failed: ' + $LASTEXITCODE) }
 & $csc /nologo /target:winexe /codepage:65001 /r:System.Windows.Forms.dll /out:"$tmpUninstall" (Join-Path $Root 'src\Uninstaller.cs') (Join-Path $Root 'src\UiNotice.cs') (Join-Path $Root 'src\NoticeDialog.cs')
 if ($LASTEXITCODE -ne 0) { throw ('uninstaller compile failed: ' + $LASTEXITCODE) }
