@@ -4,7 +4,7 @@
 
 ### 文档
 
-- 新增 `docs/使用主体与边界.md`：账号本人、单人、本地、自用；四类数据与平台边界。
+- 新增 `docs/安全与边界.md`：账号本人、单人、本地、自用；四类数据与平台边界。
 - 新增 `docs/扩展点.md`：数据契约、查询接口、采集分支、模板与语言包的接缝。
 - 新增 PR 模板；`docs/PR审查清单.md` 增加“使用主体”一节。
 - README 与 CONTRIBUTING 补充“基座而非封顶”和改造/分支说明。
@@ -27,7 +27,7 @@
 ### 新增
 
 - **`query.ps1 -Text`**：标题/简介/UP/分区/收藏夹的子串检索。首次运行在工具目录 `cache\` 建派生索引（可删、可重建），之后约 0.5 秒；`-BuildIndex` / `-IndexInfo` 管理，`-NoIndex` 退回全表扫描。不加该开关时输出逐字节不变
-- **可选内容层**：`<DataRoot>\content\<BV>\` 下放字幕、弹幕摘要、九宫格图与结论；本仓库只定义格式和读法，不提供填充工具。`-WithContent` 给每行加 `has_content`，`-ContentStats` 报条目数/体积/级别，`report.ps1` 与 `selftest.ps1` 各加一行提示。格式见 `docs/内容层.md`
+- **可选内容层**：`<DataRoot>\content\<BV>\` 下放字幕、弹幕摘要、九宫格图与结论；本仓库只定义格式和读法，不提供填充工具。`-WithContent` 给每行加 `has_content`，`-ContentStats` 报条目数/体积/级别，`report.ps1` 与 `selftest.ps1` 各加一行提示。格式见 `docs/数据与内容层.md`
 
 - **关注时间 `follow_time`**：`-Follow` 时顺带记录"你什么时候关注的这个人"。批量接口不返回该值，只能逐个查询关注关系，所以**默认关闭**（`FollowTimeMax: 0`）；开启后每次最多补 N 人，已补过的跳过
 - **分享卡片输出兜底**：数据目录不可写时（杀软拦截常见），自动改写到工具目录 `out\<周期>` 并在输出里说明；`-Open` 改为打开文件夹并选中 `card.png`，不再依赖默认看图程序
@@ -45,9 +45,9 @@
 - **热度快照** `<DataRoot>/热度/stats.jsonl`：一天一条、按 `(bvid, 日期)` 去重、原子写入，可据此画"播放量随时间"的曲线。配置项 `HeatEnabled`（默认开）与 `HeatMaxRows`（默认 5000，防体积膨胀）
 - **收藏夹权重 `FolderWeight`**：用规则替代写死的夹名——`0` = 默认不采、`1` = 普通、`2`/`3` = 优先刷新（权重高的先进 `-Enrich` 队列）。示例配置不再包含任何具体夹名
 - **详情补全 `-Enrich`**：逐条查 `view/detail`，补简介全文、UP 头像、8 个统计数、**源分辨率**、**自动识曲歌名**（`tag_type="bgm"`）。默认配额 300 条/次、间隔 600 ms，按 `enriched_at` 轮转覆盖全库；`EnrichMax` / `EnrichDelayMs` 可调
-- `docs/备份到别处.md`：把备份目标换成 Syncthing / 坚果云 / rclone 的具体改法，
+- `docs/数据与内容层.md`：把备份目标换成 Syncthing / 坚果云 / rclone 的具体改法，
   含"备份失败就别上传"的包装脚本示例
-- `docs/功能清单.md`：公开前盘点——已有能力、可扩展项（附代价与风险）、明确不做的事
+- `docs/README.md`：公开前盘点——已有能力、可扩展项（附代价与风险）、明确不做的事
 - README 新增「关于你的权利」：个人使用的边界、服务条款与著作权的区别、不对抗承诺
 - `docs/demo/`：三张**合成数据**演示图（卡片 / 查询 / 报告）与生成说明，README 已引用
 - `query.ps1 -OutList <path> [-UrlFormat]`：导出一行一个 id 的纯清单，交给外部下载器
@@ -58,9 +58,9 @@
 - `docs/第三方代码政策.md`：引入他人代码的三道门槛（许可明确且兼容 GPL-3.0、
   不进主体程序、两处署名）、实测许可清单、红区名单
 - 新增 `docs/致谢.md`：只记**实际引入**的代码，当前为零
-- `docs/风险与合规声明.md` 补“已有先例”：`SocialSisterYi/bilibili-API-collect` 于
+- `docs/安全与边界.md` 补“已有先例”：`SocialSisterYi/bilibili-API-collect` 于
   2026-01-28 收到 B 站律师函后删库停维，并据此限定了不进入发布范围的组件边界
-- `docs/风险与合规声明.md` 新增“功能暴露面分级”：按功能模块标注风险级别，并记录
+- `docs/安全与边界.md` 新增“功能暴露面分级”：按功能模块标注风险级别，并记录
   发布前的边界复核结论
 - **公开就绪化（第一批）**：README 移除下载章节，改为“本工具不提供下载”；`自动化接口.md`
   增加“参数细节不展开”的约定与症状表（`-352` / `-403` / `v_voucher` 各代表什么），
@@ -124,12 +124,12 @@
   可直接改自动化、语言、日志级别并应用计划任务。
 - 新增日志：`config.json -> LogLevel`（`normal` / `debug`）；应用日志写
   `<DataRoot>\日志\app-YYYYMMDD.log`，启动器/批处理/卸载器写 `%TEMP%\bili-memory-logs\`；
-  新增 [`docs/日志与排障.md`](docs/日志与排障.md)（含火绒误报处理）。
+  新增 [`docs/运维与排障.md`](docs/运维与排障.md)（含火绒误报处理）。
 - `B印象.exe` 不再依赖 `start.cmd`：直接启动 `tray.ps1`（首次仍是 `setup.ps1`）；
   启动器/卸载器带日志，`start.cmd` 保留为命令行回退。
 - 托盘右键扩充：刷新关注、生成报告、生成分享卡片、纯文本冷备份、打开帮助、
-  检查更新；托盘仍只放高频入口，完整命令见 [`docs/功能地图.md`](docs/功能地图.md)。
-- 新增 [`docs/运行依赖.md`](docs/运行依赖.md)：干净 Win10/11 的自带组件、
+  检查更新；托盘仍只放高频入口，完整命令见 [`docs/使用指南.md`](docs/使用指南.md)。
+- 新增 [`docs/运维与排障.md`](docs/运维与排障.md)：干净 Win10/11 的自带组件、
   7-Zip 可选、受限系统与卸载说明；`selftest.ps1` 增加 PowerShell/.NET/
   `Compress-Archive`/`ScheduledTasks`/`cmd.exe`/WinForms 检查。
 - 卸载保护：检测 `run.lock` 与正在跑的采集/备份；运行中**不删 `DataRoot`**，
@@ -147,10 +147,10 @@
   不改数据目录与文件名；`setup.ps1 -UiLanguage en-US` 可直接指定。
 - 备份新增 `-Format auto|zip|7z`：国产/加壳压缩软件不认 7z 时可强制 ZIP；
   备份轮换改为精确正则 `bili-archive-YYYYMMDD-HHMM.(7z|zip)`，不会误删同名前缀的用户文件。
-- 新增 [`docs/压缩软件兼容性.md`](docs/压缩软件兼容性.md) 与
-  [`docs/安装足迹与删除安全.md`](docs/安装足迹与删除安全.md)：列出写入路径、删除边界与兼容性。
+- 新增 [`docs/运维与排障.md`](docs/运维与排障.md) 与
+  [`docs/安全与边界.md`](docs/安全与边界.md)：列出写入路径、删除边界与兼容性。
 - 安全审计：修掉调试入口的 JS 字符串注入（限制 http(s) + 转义）与
-  `uninstall.ps1` 递归删除的路径边界；新增 [`docs/安全审计.md`](docs/安全审计.md)
+  `uninstall.ps1` 递归删除的路径边界；新增 [`docs/安全与边界.md`](docs/安全与边界.md)
   并补了本地维护笔记中的投诉应对流程（不随仓库发布）。
 - 新增 `NOTICE.md`（版权、与平台无关联、免责、投诉、不支持用途）与 `CONTRIBUTING.md`
   （GPL-3.0 贡献授权、DCO、保密要求）；README 许可段补 Copyright 与无关联声明。
@@ -159,10 +159,10 @@
 - 新增 `uninstall.ps1`：先打印删除范围，再逐项询问；`-Check` / `-DryRun` 只报告不改动，
   `-RemoveData` / `-RemoveBackups` 供非交互使用；删完列出残留与需手动删除的工具文件夹。
 - 备份不再强制 7-Zip：找不到 7-Zip 时自动用 Windows 自带 `Compress-Archive` 生成 `.zip`
-  （不能加密）；`-Encrypt` 仍要求 7-Zip。新增 [`docs/卸载与残留.md`](docs/卸载与残留.md)。
+  （不能加密）；`-Encrypt` 仍要求 7-Zip。新增 [`docs/安全与边界.md`](docs/安全与边界.md)。
 - 新增 `selftest.ps1`（只读自检：配置/浏览器/7z/目录/query/report/备份目标）与
-  `docs/测试清单.md`（按顺序的真实测试步骤与预期）。
-- 新增 `docs/新用户旅程.md`：真人/AI 两条发现路径、耗时与摩擦，以及推送前检查清单。
+  `docs/运维与排障.md`（按顺序的真实测试步骤与预期）。
+- 新增 `docs/使用指南.md`：真人/AI 两条发现路径、耗时与摩擦，以及推送前检查清单。
 - `setup.ps1` 自动寻找 7-Zip 并写入真实路径；找不到只警告，不阻塞安装。
 - **托盘开机自启改为安装时询问**：`setup.ps1` 新增 `start tray icon at logon? (y/n)`，
   答案写入 `Automation.Startup`；默认不启用。
@@ -178,7 +178,7 @@
 - README 示例图改为缩略图（600/680/520 宽），统计报告折叠进 `<details>`；
   原图保留在 `docs/demo/`，页面不再被超长截图占满。
 - 文档按读者拆分：新增 `docs/README.md`（真人 / AI / 合规 / 开发 四组索引）、
-  `docs/提示注入防护.md`、根目录 `SECURITY.md`；README 的文档区同步分组。
+  `docs/安全与边界.md`、根目录 `SECURITY.md`；README 的文档区同步分组。
 - README 增加“它是什么 / 不是什么”：明确不是 B 站账号备份/迁移工具、
   不是视频下载器、不是批量抓取他人内容的工具。
 

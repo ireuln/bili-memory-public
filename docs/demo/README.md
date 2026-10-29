@@ -17,6 +17,15 @@
 | `query.png` | `query.ps1 -Table` 的控制台输出 |
 | `report.png` | `report.ps1` 生成的 Markdown 报告（渲染后） |
 
+## 程序界面（`gui-*.png`）
+
+`gui-setup.png`、`gui-settings.png`、`gui-ai.png`、`gui-card.png`、`gui-menu.png`、`gui-uninstall.png` 是 GUI 截图，来源与上面的图同一条原则：
+
+- 跑在**临时安装目录**里，`DataRoot` 指向一份假数据（128 条观看、302 条收藏、9 条失效），不是任何人的真实归档；
+- 路径一律换成示意值（`C:\BiliArchive`、`D:\bili-backup`），卸载器那张里出现过的临时目录行也重绘成了 `C:\BiliArchiveDemo\`；
+- 窗口用不抢焦点的方式截的，没有把桌面或其它程序带进去。
+
+
 ## 为什么不用真实截图
 
 真实卡片里会出现完整的观看史——标题本身就能透露健康、情感、立场。这类图一旦进了公开仓库，就再也收不回来了。
