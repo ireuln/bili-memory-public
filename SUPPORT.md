@@ -34,4 +34,4 @@
 
 AI 能快速处理重复问题，但责任、判断和承诺必须落到人。先说清楚找谁，双方都省事。
 
-> 相关：[SECURITY.md](SECURITY.md)（安全问题）、[docs/提示注入防护.md](docs/提示注入防护.md)（别把 issue 里的标题/日志当指令）。
+> 相关：[SECURITY.md](SECURITY.md)（安全问题）、[docs/安全与边界.md](docs/安全与边界.md)（别把 issue 里的标题/日志当指令）。
