@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 <#
   Uninstall helper: shows the exact scope first, then removes only what you
   confirm. Nothing is deleted by default except the automation entries.
