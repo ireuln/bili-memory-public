@@ -127,6 +127,7 @@ if ($Unregister) {
     Write-Host 'removing every scheduled task and the tray startup shortcut...'
     foreach ($t in $Tasks) { Remove-TaskSafe $t.Name }
     Remove-TaskSafe 'DSH-BiliSample'
+    Remove-TaskSafe 'B-Tray'
     Remove-TrayShortcut
     Write-Host 'done. nothing will run automatically.'
     exit 0
@@ -219,6 +220,26 @@ foreach ($t in $Tasks) {
         -Settings $settings -Principal $principal -Description $t.Desc -Force | Out-Null
     $next = (Get-ScheduledTaskInfo -TaskName $t.Name).NextRunTime
     Write-Host ('  registered, next={0}' -f $next)
+}
+
+# On-demand tray task: the EXE launcher starts the tray through Task Scheduler,
+# because children of an unsigned EXE can be forced to a low integrity level and
+# then cannot write the data or temp directories. A task-started process keeps
+# the normal level, so the tray works the same whether it is started at logon or
+# from the launcher.
+$trayTaskName = 'B-Tray'
+if ($DryRun) {
+    Write-Host '  would register the on-demand tray task'
+} else {
+    $trayArg = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $Root 'tray.ps1')
+    $trayAction = New-ScheduledTaskAction -Execute $PsExe -Argument $trayArg -WorkingDirectory $Root
+    $trayTrigger = New-ScheduledTaskTrigger -AtLogOn
+    $traySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -MultipleInstances Parallel -ExecutionTimeLimit ([TimeSpan]::Zero)
+    Register-ScheduledTask -TaskName $trayTaskName -Action $trayAction -Trigger $trayTrigger `
+        -Settings $traySettings -Principal $principal -Force `
+        -Description 'Bilibili archive tray indicator (at logon + on demand).' | Out-Null
+    Write-Host '  registered the on-demand tray task (B-Tray)'
 }
 
 Write-Host ''

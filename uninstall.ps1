@@ -1,4 +1,4 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
   Uninstall helper: shows the exact scope first, then removes only what you
   confirm. Nothing is deleted by default except the automation entries.
@@ -56,7 +56,7 @@ if (Test-Path $CfgFile) {
     $Cfg = [System.IO.File]::ReadAllText($CfgFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
 }
 
-$TaskNames = @('DSH-BiliHistory', 'DSH-BiliFavs', 'DSH-BiliFollows', 'DSH-BiliBackup', 'DSH-BiliCold', 'DSH-BiliSample')
+$TaskNames = @('DSH-BiliHistory', 'DSH-BiliFavs', 'DSH-BiliFollows', 'DSH-BiliBackup', 'DSH-BiliCold', 'DSH-BiliSample', 'B-Tray')
 $StartupDir = [Environment]::GetFolderPath('Startup')
 $DesktopDir = [Environment]::GetFolderPath('Desktop')
 
@@ -123,7 +123,7 @@ foreach ($f in $archiveFiles) { $archiveBytes += $f.Length }
 $tempDirs = @(Get-ChildItem $env:TEMP -Directory -Filter 'bili-pkg-*' -ErrorAction SilentlyContinue) +
             @(Get-ChildItem $env:TEMP -Directory -Filter 'bili-cold-*' -ErrorAction SilentlyContinue)
 
-$taskLeft = @(Get-ScheduledTask -TaskName 'DSH-Bili*' -ErrorAction SilentlyContinue)
+$taskLeft = @(Get-ScheduledTask -TaskName 'DSH-Bili*' -ErrorAction SilentlyContinue) + @(Get-ScheduledTask -TaskName 'B-Tray' -ErrorAction SilentlyContinue)
 $dataSize = ''
 if ($DataRoot) { if (Test-Path $DataRoot) { $dataSize = Get-SizeText $DataRoot } else { $dataSize = '不存在' } }
 $toolSize = Get-SizeText $Root
