@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -121,6 +122,21 @@ class BiliMemoryLauncher
                 @"System32\WindowsPowerShell\v1.0\powershell.exe");
             string script = Path.Combine(Root, "tray.ps1");
             if (!File.Exists(script)) { Log("missing tray.ps1"); return; }
+
+            // 优先经计划任务拉起托盘：某些安全软件会把"未签名 exe 派生的子进程"
+            // 降到 Low 完整性，导致 powershell 连 %TEMP% / 数据目录都写不了。
+            // 由 Task Scheduler 启动的进程不受这条父子策略影响。
+            const string task = "B-Tray";
+            // 调用计划任务用 COM（进程内），不要用 schtasks 子进程：
+            // 安全软件会把本 exe 派生的子进程降到 Low，schtasks 连任务服务都访问不了。
+            if (RunTaskCom(task)) { Log("started tray via task " + task + " (COM)"); return; }
+            Log("COM run failed: " + LastCmdOut);
+
+            const string run = "/Run /TN \"" + task + "\"";
+            int rc = RunHidden("schtasks.exe", run, 8000);
+            if (rc == 0) { Log("started tray via task " + task); return; }
+            Log("task run rc=" + rc + " out=" + LastCmdOut + ", direct fallback");
+
             var psi = new ProcessStartInfo();
             psi.FileName = ps;
             psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"";
@@ -128,13 +144,50 @@ class BiliMemoryLauncher
             psi.UseShellExecute = true;
             psi.WindowStyle = ProcessWindowStyle.Hidden;
             Process.Start(psi);
-            Log("launched tray.ps1");
+            Log("launched tray.ps1 (direct fallback)");
         }
         catch (Exception ex)
         {
             Log("ERROR " + ex);
             UiNotice.Show("B印象", ex.Message, NoticeKind.Error);
         }
+    }
+
+    static bool RunTaskCom(string name)
+    {
+        try
+        {
+            Type t = Type.GetTypeFromProgID("Schedule.Service");
+            if (t == null) { LastCmdOut = "no Schedule.Service"; return false; }
+            object svc = Activator.CreateInstance(t);
+            t.InvokeMember("Connect", BindingFlags.InvokeMethod, null, svc, new object[] { });
+            object root = t.InvokeMember("GetFolder", BindingFlags.InvokeMethod, null, svc, new object[] { "\\" });
+            object task = root.GetType().InvokeMember("GetTask", BindingFlags.InvokeMethod, null, root, new object[] { name });
+            task.GetType().InvokeMember("Run", BindingFlags.InvokeMethod, null, task, new object[] { null });
+            return true;
+        }
+        catch (Exception ex) { LastCmdOut = ex.GetType().Name + ": " + ex.Message; return false; }
+    }
+
+    static string LastCmdOut = "";
+
+    static int RunHidden(string file, string args, int timeoutMs)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(file, args);
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.WindowStyle = ProcessWindowStyle.Hidden;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            var p = Process.Start(psi);
+            if (p == null) return -1;
+            if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } return -2; }
+            LastCmdOut = (p.StandardOutput.ReadToEnd() + " " + p.StandardError.ReadToEnd()).Trim();
+            return p.ExitCode;
+        }
+        catch (Exception ex) { LastCmdOut = "EX " + ex.Message; return -3; }
     }
 
     class SetupForm : Form
