@@ -1,0 +1,179 @@
+{
+  "schema": 2,
+  "title": "B印象 · 设置",
+  "sections": [
+    {
+      "id": "overview",
+      "title": "概览",
+      "desc": "采集状态、增量与快捷入口。",
+      "type": "overview"
+    },
+    {
+      "id": "collect",
+      "title": "采集范围",
+      "desc": "决定每次采集抓哪些数据、抓多深。改动即时保存，下一次采集生效。",
+      "groups": [
+        {
+          "id": "watch",
+          "title": "观看与收藏",
+          "desc": "核心数据；关掉后查询、报告和备份里都不会出现对应内容。",
+          "items": [
+            { "key": "Automation.History", "label": "观看记录", "type": "automation", "desc": "每天增量采集；接口最多回溯约 1200 条，断更超过这个窗口就永久少一天" },
+            { "key": "Automation.FavQuick", "label": "收藏 · 每日增量", "type": "automation", "desc": "只翻新收藏，遇到已有条目即停，秒级完成" },
+            { "key": "Automation.Favorites", "label": "收藏 · 每周全量", "type": "automation", "desc": "每周日全量核对 22 个收藏夹与失效状态，约 20 分钟" },
+            { "key": "NotifyInvalid", "label": "发现失效时通知", "type": "bool", "default": true, "desc": "收藏采集（增量或全量）发现新失效条目时，弹一条系统通知" }
+          ]
+        },
+        {
+          "id": "feed",
+          "title": "动态与关注",
+          "items": [
+            { "key": "Automation.Dynamic", "label": "动态流", "type": "automation", "desc": "特别关注的 UP 动态，每天 04:10" },
+            { "key": "Automation.Follows", "label": "关注分组", "type": "automation", "desc": "关注分组 / 特别关注 / 近 30 天高频 UP" },
+            { "key": "FollowTimeMax", "label": "关注数据覆盖天数", "type": "int", "min": 1, "max": 3650, "unit": "天", "desc": "每轮最多回溯多少天的关注记录；数值越大越慢" }
+          ]
+        },
+        {
+          "id": "enrich",
+          "title": "详情与热度",
+          "items": [
+            { "key": "EnrichMax", "label": "详情补全上限", "type": "int", "min": 0, "max": 10000, "unit": "条/轮", "desc": "每轮最多补多少条视频详情；0 = 关闭。补全越深，接口压力越大" },
+            { "key": "EnrichDelayMs", "label": "详情请求间隔", "type": "int", "min": 0, "max": 10000, "unit": "ms", "desc": "两条详情请求之间的等待；调小更快，但更容易触发限流" },
+            { "key": "HeatEnabled", "label": "热度快照", "type": "bool", "desc": "记录收藏视频的播放量、点赞、弹幕数变化" },
+            { "key": "HeatMaxRows", "label": "热度最多保留", "type": "int", "min": 100, "max": 200000, "unit": "行", "desc": "超过后按时间淘汰最旧的快照" }
+          ]
+        },
+        {
+          "id": "media",
+          "title": "封面与素材",
+          "items": [
+            { "key": "CoverWidth", "label": "封面宽度", "type": "int", "min": 64, "max": 1280, "unit": "px", "desc": "封面快照尺寸；越大越清晰，占用也越大" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "folders",
+      "title": "收藏夹",
+      "desc": "每个夹的采集级别与顺序。默认按 B 站上的收藏夹顺序；拖动左侧手柄调整后，采集也按这个顺序。改动即时保存，下一轮采集生效。",
+      "type": "folders"
+    },
+    {
+      "id": "tasks",
+      "title": "定时与自动",
+      "desc": "Windows 计划任务状态、执行时间与备份开关。改动先存到配置，点「应用计划任务」才写进系统。",
+      "type": "tasks",
+      "groups": [
+        {
+          "id": "backup",
+          "title": "备份",
+          "desc": "备份是独立任务，可以先关掉定时、只保留手动生成。",
+          "items": [
+            { "key": "Automation.Backup", "label": "每周加密备份", "type": "automation", "desc": "AES-256，双目标落地，自动只留 5 份" },
+            { "key": "Automation.BackupCold", "label": "冷备份（纯文本）", "type": "automation", "desc": "把归档转成纯文本再打包，几乎不压缩；手动为主时不必开" }
+          ]
+        },
+        {
+          "id": "times",
+          "title": "执行时间",
+          "items": [
+            { "key": "Schedule.History", "label": "观看记录", "type": "time", "desc": "每天几点跑" },
+            { "key": "Schedule.Dynamic", "label": "动态流", "type": "time", "desc": "每天几点跑" },
+            { "key": "Schedule.FavQuick", "label": "收藏 · 每日增量", "type": "time", "desc": "每天几点跑" },
+            { "key": "Schedule.Favorites", "label": "收藏 · 每周全量", "type": "time", "desc": "每周日几点跑" },
+            { "key": "Schedule.Follows", "label": "关注分组", "type": "time", "desc": "每周日几点跑" },
+            { "key": "Schedule.Backup", "label": "加密备份", "type": "time", "desc": "每周日几点跑" },
+            { "key": "Schedule.BackupCold", "label": "冷备份", "type": "time", "desc": "每周日几点跑" }
+          ]
+        },
+        {
+          "id": "sampling",
+          "title": "高频采样",
+          "desc": "默认关闭。开启后按固定间隔额外跑一次观看记录采集，用于更细的进度快照；间隔越密，请求越多。低于 15 分钟属于突破默认安全线，会有醒目警告。",
+          "items": [
+            { "key": "Sampling", "label": "采样间隔", "type": "int", "min": 0, "max": 1440, "unit": "分钟", "desc": "0 = 关闭。15 分钟及以上较稳；5–14 分钟会显著增加风控风险，每天最多跑 288 次" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "card",
+      "title": "悬浮卡",
+      "desc": "数据速览卡显示哪些内容；默认近期优先。改动即时保存，下次打开卡片生效。",
+      "groups": [
+        {
+          "id": "carditems",
+          "title": "指标",
+          "items": [
+            { "key": "Tray.Card.ShowToday", "label": "今天新增", "type": "bool", "default": true, "desc": "今天采集到的观看记录条数" },
+            { "key": "Tray.Card.ShowWeek", "label": "近 7 天", "type": "bool", "default": true, "desc": "最近 7 天的观看记录条数" },
+            { "key": "Tray.Card.ShowMonth", "label": "本月", "type": "bool", "default": false, "desc": "本月观看记录条数；默认关闭，给近期数据让位" },
+            { "key": "Tray.Card.ShowFav", "label": "收藏总数", "type": "bool", "default": true },
+            { "key": "Tray.Card.ShowInvalid", "label": "失效总数", "type": "bool", "default": true },
+            { "key": "Tray.Card.ShowStatus", "label": "状态条", "type": "bool", "default": true, "desc": "上次成功/失败与耗时" },
+            { "key": "Tray.Card.ShowTimes", "label": "上次/下次时间", "type": "bool", "default": true },
+            { "key": "Tray.Card.ShowRotate", "label": "轮换提示行", "type": "bool", "default": true }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deleted",
+      "title": "已删除",
+      "desc": "收集过、后来在 B 站上消失的视频。动态与文章暂未做失效检测，这里只覆盖收藏视频。",
+      "type": "deleted"
+    },
+    {
+      "id": "watch",
+      "title": "评论监控",
+      "desc": "常驻进程盯指定视频的新评论与消失评论；只记录“曾经公开、后来消失”的评论。",
+      "type": "watch"
+    },
+    {
+      "id": "share",
+      "title": "分享与备份",
+      "desc": "生成分享卡片、管理备份目标与高清封面。",
+      "type": "share",
+      "groups": [
+        {
+          "id": "watermark",
+          "title": "卡片水印",
+          "items": [
+            { "key": "CardWatermark", "label": "卡片水印", "type": "bool", "desc": "生成的分享卡片右下角是否带文字水印" },
+            { "key": "WatermarkText", "label": "水印文字", "type": "text", "desc": "水印内容，留空则不显示" }
+          ]
+        },
+        {
+          "id": "backupopts",
+          "title": "备份",
+          "items": [
+            { "key": "DesktopShortcut", "label": "备份后在桌面放快捷方式", "type": "bool", "default": false, "desc": "每次备份后在桌面更新一条指向最新备份的快捷方式；关掉时会删掉旧的那条" },
+            { "key": "BackupCoverMode", "label": "备份包含封面", "type": "enum", "values": ["metadata", "covers", "hd"], "desc": "metadata=只带元数据；covers=带 320px 封面；hd=带高清封面（需先在高清封面页下载）" },
+            { "key": "HdCoverWidth", "label": "高清封面宽度", "type": "int", "min": 0, "max": 2560, "unit": "px", "desc": "0 = 原图；下载时按宽度向 B 站图床取缩放图，越小越省空间（实测 1632px→1280px 约省 40%）" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "advanced",
+      "title": "高级",
+      "desc": "低频设置。界面语言与日志级别；采集顺序已改由「收藏夹」页拖动决定。",
+      "groups": [
+        {
+          "id": "general",
+          "title": "界面与日志",
+          "items": [
+            { "key": "UiLanguage", "label": "界面语言", "type": "enum", "values": ["zh-CN", "en-US"], "desc": "托盘菜单与提示语的语言" },
+            { "key": "LogLevel", "label": "日志级别", "type": "enum", "values": ["debug", "info", "warn", "error"], "desc": "debug 记录每次请求细节，日志量最大" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "help",
+      "title": "帮助",
+      "desc": "入门五步、数据文件与给 AI 的提示词。",
+      "type": "help"
+    }
+  ]
+}
