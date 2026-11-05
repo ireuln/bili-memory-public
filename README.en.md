@@ -70,6 +70,14 @@ Set `"UiLanguage": "en-US"` in `config.json` (or pick it in the setup window).
 - **Credentials**: do not paste cookies, SESSDATA, or the login-state folder into issues, chats, or someone else's AI. Public = leaked; rotate immediately.
 - **Official releases only**: download from this repository's Releases page. Re-packaged forks cannot be verified.
 
+## Feedback
+
+Testing, feature requests, bug reports, and usage questions are welcome — this is an early tool and real accounts hit edge cases the author cannot predict.
+
+- **Bugs / requests**: open an [issue](https://github.com/ireuln/bili-memory-public/issues). Include the version, Windows build, and steps. Never paste cookies / SESSDATA / the login-state folder / logs with real titles or uids (see [SECURITY.md](SECURITY.md)).
+- **Out of scope (will not be implemented)**: downloading videos, bypassing rate limits / membership / paywalls, scraping other people's data, account trading, automation abuse, or anything that fights the platform.
+- **PRs**: welcome; open an issue first so we can agree on the scope.
+
 ## Limits
 
 - Invalid tracking covers **favorited videos only**. Feed posts and articles have

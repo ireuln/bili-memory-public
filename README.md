@@ -405,7 +405,14 @@ powershell.exe ... -File .\register-task.ps1 -Sampling off   # 关掉
 
 配置项见 [`config.example.json`](config.example.json)。
 
-## 交流
+## 交流与反馈
+
+**欢迎测试、提需求、报 BUG、交流用法。** 这个工具还在早期：真实账号的边界情况比作者一个人遇到的更多，你的反馈就是它变好的主要来源。
+
+- **报 BUG**：用 [Issues](https://github.com/ireuln/bili-memory-public/issues)（有 bug 模板），附版本号、Windows 版本、复现步骤；**不要贴 cookie / SESSDATA / 登录态目录 / 含真实标题与 uid 的日志**，先按 [`SECURITY.md`](SECURITY.md) 脱敏。
+- **提需求**：同样走 Issue，说清"想备份什么、现有哪里不够"，不用写实现方案。
+- **不回应/不实现的需求**：批量下载、绕过风控或会员/付费墙、抓取他人数据、账号交易或代运营、自动化刷量、任何"对抗平台"的能力——这类需求不是优先级低，是边界之外。
+- **交流**：Issue 里可以聊用法、数据格式、移植到其他平台；PR 欢迎，先开 Issue 对齐再动手，避免白写。
 
 开 issue / PR 时，第一行写 `To: human`、`To: ai` 或 `To: either`（中文：`找人类` / `找 AI` / `都可以`）；没写默认按人类处理。回复可能来自人类作者，也可能来自作者的 AI 助手——AI 会自我标识，但合并、发布与法律判断由人做。详见 [`SUPPORT.md`](SUPPORT.md)。
 
