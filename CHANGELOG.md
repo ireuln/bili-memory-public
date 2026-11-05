@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.7 — 2026-11-05
+
+### 新增
+
+- **本地网页设置页**：托盘「详细功能与设置」打开只绑 127.0.0.1 的网页（随机端口 + 一次性 token、30 分钟空闲自退）；原生 `B印象.exe -settings` 保留为回退。
+- **英文界面**：`lang/en-US.json` 覆盖托盘/提示/分享卡；新增 `README.en.md` 英文说明。
+- **悬浮卡可配 + 近期优先**：默认显示今天新增 / 近 7 天 / 收藏 / 失效；设置页可逐项开关（含本月、状态条、时间、轮换行）。
+- **失效通知**：收藏采集发现新失效时发系统通知（`NotifyInvalid`，默认开）。
+- **封面质量**：`fetch-covers-hd.ps1 -Width`（0=原图）；备份可带封面（`BackupCoverMode`）。
+- **评论/弹幕抓取（可选）**：`fetch-media.ps1` 手动抓热门评论 + 弹幕，默认不运行、不进计划任务。
+- **首次使用快捷方式**：`setup.ps1` 可选创建桌面 / 开始菜单快捷方式；托盘新增「扫码登录」。
+- **测试与回归**：`tests/`（Pester）+ `tools/regress.ps1`；`.psscriptanalyzer.psd1` 基线。
+
+### 安全
+
+- 设置服务增加 Host 校验（防 DNS rebinding）；页面加载后清掉 URL 里的 token；`/api/apply` 需显式 `{"confirm":true}`。
+
+### 修复
+
+- `tools/check-encoding.ps1 -Fix` 修完返回 0；`pre-commit` 增加编码检查。
+- 备份后的桌面快捷方式改为默认关闭（`DesktopShortcut`）。
+
+### 文档
+
+- README 重排：三步开始 + 一段复合风险警告，删除重复的风险表；新增英文页。
+
 ## v0.1.6 — 2026-10-30
 
 ### 新增

@@ -48,6 +48,7 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $files = @(
     'start.cmd',
     'README.md',
+    'README.en.md',
     'LICENSE',
     'NOTICE.md',
     'SUPPORT.md',
@@ -56,7 +57,10 @@ $files = @(
     'CHANGELOG.md',
     'llms.txt',
     'config.example.json',
-    'version.json'
+    'version.json',
+    '.psscriptanalyzer.psd1',
+    'settings.html',
+    'settings.schema.json'
 )
 foreach ($f in $files) {
     $src = Join-Path $Root $f
@@ -68,7 +72,7 @@ foreach ($s in $scripts) { Copy-Item $s.FullName $OutDir -Force }
 
 # 'share' holds the card template (share\card.html); leaving it out made
 # share.ps1 fail with "file not found" in every packaged build.
-foreach ($dir in @('lang', 'lib', 'tools', 'assets', 'docs', 'share')) {
+foreach ($dir in @('lang', 'lib', 'tools', 'assets', 'docs', 'share', 'tests')) {
     $src = Join-Path $Root $dir
     if (Test-Path $src) { Copy-Item $src (Join-Path $OutDir $dir) -Recurse -Force }
 }
