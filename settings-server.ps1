@@ -616,6 +616,15 @@ try {
                     if ($kv -match '^t=(.+)$') { $queryToken = [uri]::UnescapeDataString($matches[1]) }
                 }
             }
+            # Host must be the loopback listener: a DNS-rebinding page arrives
+            # with its own host name even though it resolves to 127.0.0.1.
+            $hostHeader = ''
+            if ($headers.ContainsKey('host')) { $hostHeader = [string]$headers['host'] }
+            if ($hostHeader -and $hostHeader -notmatch '^(127\.0\.0\.1|localhost|\[::1\]):' + $actualPort + '$') {
+                Send-Response $stream 403 'text/plain' 'forbidden host'
+                $client.Close()
+                continue
+            }
             $reqToken = $queryToken
             if (-not $reqToken -and $headers.ContainsKey('x-token')) { $reqToken = $headers['x-token'] }
             if ($reqToken -ne $token) {
@@ -920,6 +929,15 @@ try {
                 Send-Response $stream 200 'application/json' '{"ok":true}'
             }
             elseif ($method -eq 'POST' -and $path -eq '/api/apply') {
+                # Registering scheduled tasks is the one write that outlives the
+                # settings page; require an explicit confirmation in the body.
+                $req = $null
+                try { $req = $body | ConvertFrom-Json } catch { }
+                if (-not $req -or $req.confirm -ne $true) {
+                    Send-Response $stream 400 'application/json' '{"ok":false,"error":"confirmation required"}'
+                    $client.Close()
+                    continue
+                }
                 $code = Invoke-ApplyTasks
                 $script:Cache.tasks = $null
                 $resp = [pscustomobject]@{
