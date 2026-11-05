@@ -41,6 +41,7 @@ param(
     [switch]$Full,
     [switch]$FavFolders,
     [switch]$Fav,
+    [switch]$FavIncremental,
     [string[]]$FavOnly = @(),
     [switch]$NoCover,
     [int]$CoverWidth = 0,
@@ -60,7 +61,9 @@ param(
     [int]$EnrichMax = 0,
     [int]$EnrichDelayMs = 0,
     [int]$Port = 9223,
-    [int]$LoginTimeoutSec = 300
+    [int]$LoginTimeoutSec = 300,
+    [switch]$Dynamic,
+    [int]$DynamicPages = 2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -306,13 +309,26 @@ function Wait-PageReady {
 param($Ws, [string]$ExpectHost = 'bilibili.com', [int]$TimeoutSec = 30)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $last = $null
+    $errHits = 0
     while ((Get-Date) -lt $deadline) {
         try {
             $v = Invoke-Js -Ws $Ws -Expression 'JSON.stringify({s:document.readyState,h:location.href})' -TimeoutMs 8000
             $o = $v | ConvertFrom-Json
             $last = $o.h
             if ($o.s -eq 'complete' -and $o.h -like "*$ExpectHost*") { return $o.h }
-        } catch { $last = $_.Exception.Message }
+            # A browser error page is terminal: the renderer already gave up on
+            # the request, so sitting out the rest of the timeout only burns the
+            # retry budget (2026-10-29 04:00: three attempts, ~63s each, all of
+            # them on chrome-error). Two samples apart because a page in flight
+            # can pass through an error document right before it redirects.
+            if ($o.h -like 'chrome-error://*') {
+                $errHits++
+                if ($errHits -ge 2) { throw ('ERR_PAGE_LOAD: tab is on a browser error page (' + $o.h + ')') }
+            }
+        } catch {
+            if ($_.Exception.Message -like 'ERR_PAGE_LOAD*') { throw }
+            $last = $_.Exception.Message
+        }
         Start-Sleep -Milliseconds 600
     }
     throw "page never reached a usable state (last href: $last)"
@@ -341,6 +357,55 @@ param([int]$Port, [string]$Url = '', [int]$ReadyTimeout = 40)
         $href = Wait-PageReady -Ws $ws -ExpectHost 'bilibili.com' -TimeoutSec $ReadyTimeout
     }
     return [pscustomobject]@{ Ws = $ws; Href = $href }
+}
+
+function Test-NetworkReachable {
+    # Two independent probes on purpose. curl.exe is the reliable one here: a
+    # Windows PowerShell 5.1 process on this machine cannot open an outbound TCP
+    # socket at all (the connect dies with "access denied by socket permissions"
+    # after ~30s, WFP/AV filter), while a curl.exe child of the same process
+    # connects immediately. Invoke-WebRequest is kept as a second opinion
+    # because it goes through .NET's HTTP stack, which is not always blocked the
+    # same way. Either one succeeding means the platform is reachable.
+    # ---------------------------------------------------------------------------
+param([string]$Target = 'https://api.bilibili.com/x/web-interface/nav', [int]$TimeoutSec = 8)
+    $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+    if (Test-Path $curl) {
+        try {
+            $code = ('{0}' -f (& $curl -s -o NUL --max-time $TimeoutSec -w '%{http_code}' $Target 2>$null | Out-String)).Trim()
+            if ($code -match '^[1-5][0-9][0-9]$') { return $true }
+        } catch { }
+    }
+    try {
+        $status = [int](Invoke-WebRequest -Uri $Target -UseBasicParsing -TimeoutSec $TimeoutSec).StatusCode
+        if ($status -ge 100) { return $true }
+    } catch { }
+    return $false
+}
+
+function Wait-NetworkReady {
+    # Wait before the browser exists, not inside it. A preflight poll is free;
+    # a failure here reads as "network" in the log instead of "collector broken".
+    # ---------------------------------------------------------------------------
+param([int]$MaxSec = 180, [int]$IntervalSec = 15, [string]$Target = 'https://api.bilibili.com/x/web-interface/nav')
+    if ($MaxSec -le 0) { return $true }
+    $deadline = (Get-Date).AddSeconds($MaxSec)
+    $probe = 0
+    while ($true) {
+        $probe++
+        if (Test-NetworkReachable -Target $Target) {
+            if ($probe -gt 1) { Write-Log ("network reachable after {0} probe(s)" -f $probe) }
+            return $true
+        }
+        $left = [int][Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+        if ($left -le 0) {
+            Write-Log ("network still unreachable after {0}s; continuing anyway" -f $MaxSec) 'WARN'
+            return $false
+        }
+        $nap = [Math]::Min($IntervalSec, $left)
+        Write-Log ("network unreachable (probe {0}); retrying in {1}s" -f $probe, $nap) 'WARN'
+        Start-Sleep -Seconds $nap
+    }
 }
 
 function Test-BrowserAlive {
@@ -487,10 +552,10 @@ $JsFavFolders = @'
     const j = await r.json();
     if (j.code !== 0) { return JSON.stringify({ ok: false, error: 'api', code: j.code, message: j.message }); }
     const list = (j.data && j.data.list) || [];
+    // Keep the API order: it is the user's own folder order on Bilibili.
     const folders = list.map(function (f) {
       return { id: f.id, fid: f.fid, title: f.title, count: f.media_count, attr: f.attr, state: f.state };
     });
-    folders.sort(function (a, b) { return (b.count || 0) - (a.count || 0); });
     return JSON.stringify({ ok: true, mid: mid, uname: nj.data.uname || '', folders: folders });
   } catch (e) { return JSON.stringify({ ok: false, error: 'exception', message: String(e) }); }
 })()
@@ -609,6 +674,37 @@ param([string]$Mode, [int]$ExitCode, [hashtable]$Extra)
     } catch { }
 }
 
+function Show-InvalidToast {
+    # System toast when a favourites scan finds newly dead items. Best effort:
+    # any WinRT failure just returns $false and the scan result is unaffected.
+    # Chinese text is built from code points because this file must stay ASCII.
+param([int]$Count)
+    try {
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction Stop
+        $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+        $aumid = 'Bimpression'
+        $reg = 'HKCU:\Software\Classes\AppUserModelId\' + $aumid
+        if (-not (Test-Path $reg)) {
+            New-Item -Path $reg -Force | Out-Null
+            New-ItemProperty -Path $reg -Name 'DisplayName' -Value 'Bimpression' -PropertyType String -Force | Out-Null
+        }
+        $title = 'B impression - ' + [string][char]0x65B0 + [string][char]0x53D1 + [string][char]0x73B0 + [string][char]0x5931 + [string][char]0x6548
+        $body = [string]$Count + ' ' + [string][char]0x6761 + [string][char]0x6536 + [string][char]0x85CF + [string][char]0x65B0 + [string][char]0x5931 + [string][char]0x6548
+        $safeTitle = [System.Security.SecurityElement]::Escape($title)
+        $safeBody = [System.Security.SecurityElement]::Escape($body)
+        $xml = '<toast><visual><binding template="ToastGeneric"><text>' + $safeTitle + '</text><text>' + $safeBody + '</text></binding></visual></toast>'
+        $doc = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $doc.LoadXml($xml)
+        $toast = New-Object Windows.UI.Notifications.ToastNotification $doc
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($toast)
+        return $true
+    } catch {
+        Write-Log ('invalid toast unavailable: ' + $_.Exception.Message) 'WARN'
+        return $false
+    }
+}
+
 function Get-RecordKey {
     # ---------------------------------------------------------------------------
 param($Rec)
@@ -670,9 +766,11 @@ $JsFavPage = @'
   const MAXPAGES = __MAX_PAGES__;
   const DELAY_MIN = __DELAY_MIN__;
   const DELAY_MAX = __DELAY_MAX__;
+  const INCREMENTAL = __INCREMENTAL__;
+  const KNOWN = new Set(__KNOWN__);
   try {
     const out = [];
-    let pn = 1, pages = 0, exhausted = false;
+    let pn = 1, pages = 0, exhausted = false, stopped = false, fresh = 0;
     while (pages < MAXPAGES) {
       const url = 'https://api.bilibili.com/x/v3/fav/resource/list?media_id=' + MEDIA_ID +
                   '&pn=' + pn + '&ps=20&platform=web&order=mtime&type=0&tid=0';
@@ -684,6 +782,7 @@ $JsFavPage = @'
       const d = j.data || {};
       const medias = d.medias || [];
       for (const m of medias) {
+        if (INCREMENTAL && m.bvid && !KNOWN.has(m.bvid)) { fresh++; }
         const up = m.upper || {};
         const attr = m.attr || 0;
         const ci = m.cnt_info || {};
@@ -709,12 +808,15 @@ $JsFavPage = @'
       }
       pages++;
       if (!d.has_more || medias.length === 0) { exhausted = true; break; }
+      // Incremental: the list is ordered by fav_time desc, so once a whole page
+      // is already on disk there is nothing older worth fetching.
+      if (INCREMENTAL && fresh === 0) { stopped = true; break; }
       pn++;
       await new Promise(function (res) {
         setTimeout(res, DELAY_MIN + Math.floor(Math.random() * Math.max(1, DELAY_MAX - DELAY_MIN)));
       });
     }
-    return JSON.stringify({ ok: true, media_id: MEDIA_ID, list: out, pages: pages, exhausted: exhausted });
+    return JSON.stringify({ ok: true, media_id: MEDIA_ID, list: out, pages: pages, exhausted: exhausted, stopped: stopped });
   } catch (e) {
     return JSON.stringify({ ok: false, error: 'exception', message: String(e), list: [], pages: 0 });
   }
@@ -743,11 +845,25 @@ param([string]$Name)
     return $s
 }
 
+function Read-LinesShared {
+    # Open for read while allowing a concurrent writer: a collection run may be
+    # replacing the master table at the very moment a reader starts.
+    param([string]$Path)
+    $fs = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+    try {
+        while ($null -ne ($line = $sr.ReadLine())) { $line }
+    } finally {
+        $sr.Dispose()
+        $fs.Dispose()
+    }
+}
+
 function Read-FavMaster {
     $map = [ordered]@{}
     $path = Join-Path $DirFav $Ui.masterFile
     if (-not (Test-Path $path)) { return $map }
-    foreach ($line in [System.IO.File]::ReadLines($path)) {
+    foreach ($line in (Read-LinesShared $path)) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try {
             $o = $line | ConvertFrom-Json
@@ -755,6 +871,30 @@ function Read-FavMaster {
         } catch { }
     }
     return $map
+}
+
+function Write-AllTextRetry {
+    # ---------------------------------------------------------------------------
+    # Readers (doctor / query / the tray) may hold the master table open with a
+    # sharing mode that blocks the writer. A transient violation must not kill
+    # the whole collection run: retry with backoff. Readers are short-lived, the
+    # write is the only long operation.
+    param([string]$Path, [string]$Text, [System.Text.Encoding]$Enc, [int]$Attempts = 6)
+    $delay = 200
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            [System.IO.File]::WriteAllText($Path, $Text, $Enc)
+            return
+        } catch [System.IO.IOException] {
+            if ($i -ge $Attempts) {
+                Write-Log ("give up writing after {0} attempt(s): {1}" -f $i, $Path) 'ERROR'
+                throw
+            }
+            Write-Log ("file busy, retry {0}/{1} in {2} ms" -f $i, $Attempts, $delay) 'WARN'
+            Start-Sleep -Milliseconds $delay
+            $delay = [Math]::Min($delay * 2, 2000)
+        }
+    }
 }
 
 function Write-FavMaster {
@@ -767,7 +907,7 @@ param($Map)
     foreach ($o in $items) {
         [void]$sb.Append(($o | ConvertTo-Json -Depth 5 -Compress) + "`n")
     }
-    [System.IO.File]::WriteAllText($path, $sb.ToString(), $utf8)
+    Write-AllTextRetry -Path $path -Text $sb.ToString() -Enc $utf8
     return $items.Count
 }
 
@@ -939,6 +1079,7 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
     $now = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     $grandNew = 0
     $grandInv = 0
+    $grandNewInvalid = 0
 
     foreach ($folder in $Folders) {
         $ckKey = [string]$folder.id
@@ -953,7 +1094,22 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
         if ($MaxPages -gt 0 -and $pages -gt $MaxPages) { $pages = $MaxPages }
         Write-Log ("folder '{0}' id={1} count={2} pages<={3}" -f $folder.title, $folder.id, $folder.count, $pages)
 
-        $expr = $JsFavPage.Replace('__MEDIA_ID__', [string]$folder.id).Replace('__MAX_PAGES__', [string]$pages).Replace('__DELAY_MIN__', '1200').Replace('__DELAY_MAX__', '2000')
+        # Incremental mode needs the bvids already known for THIS folder; the
+        # list is ordered by fav_time desc, so the first all-known page means
+        # there is nothing new below it.
+        $knownJson = '[]'
+        if ($FavIncremental) {
+            # Global set, not per folder: folder_id only points at the last folder
+            # that saw a video, so a per-folder set misses every video that also
+            # lives elsewhere and the early stop never fires. Measured 00:19: a
+            # 1000-item folder paged all 52 pages before the timeout.
+            if ($null -eq $script:FavKnownAll) {
+                $bv = @($master.Values | Where-Object { $_.bvid } | ForEach-Object { [string]$_.bvid })
+                $script:FavKnownAll = $(if ($bv.Count -gt 0) { '["' + ($bv -join '","') + '"]' } else { '[]' })
+            }
+            $knownJson = $script:FavKnownAll
+        }
+        $expr = $JsFavPage.Replace('__MEDIA_ID__', [string]$folder.id).Replace('__MAX_PAGES__', [string]$pages).Replace('__DELAY_MIN__', '1200').Replace('__DELAY_MAX__', '2000').Replace('__INCREMENTAL__', $(if ($FavIncremental) { 'true' } else { 'false' })).Replace('__KNOWN__', $knownJson)
         $timeout = 60000 + ($pages * 2500)
         $raw = Invoke-JsRetry -Port $Port -Expression $expr -TimeoutMs $timeout
         $res = $raw | ConvertFrom-Json
@@ -962,10 +1118,11 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
             continue
         }
         $items = @($res.list)
-        Write-Log ("  fetched {0} item(s) over {1} page(s)" -f $items.Count, $res.pages)
+        Write-Log ("  fetched {0} item(s) over {1} page(s){2}" -f $items.Count, $res.pages, $(if ($res.stopped) { ' (incremental stop: page already known)' } else { '' }))
 
         $newCount = 0
         $invCount = 0
+        $newInvalid = 0
         $coverDir = Join-Path $DirCover ([string]$folder.id)
         if ($WithCover -and -not (Test-Path $coverDir)) { New-Item -ItemType Directory -Force -Path $coverDir | Out-Null }
 
@@ -976,12 +1133,14 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
             if ($null -eq $rec) {
                 $rec = [pscustomobject]@{
                     folder_id = [long]$folder.id; folder = [string]$folder.title
+                    folders = @([string]$folder.title)
                     bvid = $it.bvid; aid = [int64]$it.aid; type = $it.type
                     title = $it.title; upper = $it.upper; upper_mid = [int64]$it.upper_mid
                     duration = $it.duration; pubtime = [int64]$it.pubtime; fav_time = [int64]$it.fav_time
                     attr = $it.attr; invalid = [bool]$it.invalid
                     first_seen = $now; last_seen = $now
                     invalid_since = $(if ($it.invalid) { $now } else { '' })
+                    invalid_known = $false
                     intro = $it.intro; link = $it.link; cover = $it.cover
                     play = [int64]$it.play; danmaku = [int64]$it.danmaku; fav_count = [int64]$it.fav_count
                     stats_at = $now
@@ -989,12 +1148,29 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
                 $master[$k] = $rec
                 $newCount++
             } else {
-                $rec.last_seen = $now
+                # last_seen means "last seen healthy": a dead video answers every
+                # scan, so advancing it would erase the only honest lower bound
+                # on when the video disappeared. Bilibili reports no removal time.
+                if (-not [bool]$it.invalid) { $rec.last_seen = $now }
+                # Same video may sit in several folders; keep the union so a
+                # per-folder query does not depend on scan order.
+                $ftNew = [string]$folder.title
+                $flNew = @($rec.folders)
+                if (-not $flNew -or $flNew.Count -eq 0) {
+                    $flNew = @([string]$rec.folder)
+                    if (-not $rec.PSObject.Properties['folders']) {
+                        $rec | Add-Member -NotePropertyName folders -NotePropertyValue @($flNew) -Force
+                    }
+                }
+                if ($flNew -notcontains $ftNew) { $flNew += $ftNew; $rec.folders = @($flNew) }
                 $rec.folder_id = [long]$folder.id
                 $rec.folder = [string]$folder.title
-                if ($it.title) { $rec.title = $it.title }
+                # Keep the last real title/cover: a dead video answers with a
+                # generic "deleted" title and a placeholder image, so overwriting
+                # them would erase the only data that still identifies what it was.
+                if ($it.title -and -not $it.invalid) { $rec.title = $it.title }
                 if ($it.upper) { $rec.upper = $it.upper }
-                if ($it.cover) { $rec.cover = $it.cover }
+                if ($it.cover -and -not $it.invalid) { $rec.cover = $it.cover }
                 $rec.attr = $it.attr
                 # Counters come for free in the same response; keep the record
                 # current and let the heat snapshot below own the time series.
@@ -1008,9 +1184,22 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
                 if ([bool]$it.invalid -and -not $rec.invalid) {
                     $rec.invalid = $true
                     $rec.invalid_since = $now
+                    $newInvalid++
+                    # The removal happened between the last healthy sighting and
+                    # this scan. Trust that window only when the gap is shorter
+                    # than a normal collection interval; otherwise the real time
+                    # is unknown (a long pause, or a bulk first-time detection).
+                    $known = $false
+                    $ls = [string]$rec.last_seen
+                    if ($ls) {
+                        try { $known = (((Get-Date) - [datetime]$ls).TotalHours -le 48) } catch { }
+                    }
+                    if ($rec.PSObject.Properties['invalid_known']) { $rec.invalid_known = $known }
+                    else { $rec | Add-Member -NotePropertyName invalid_known -NotePropertyValue $known -Force }
                 } elseif (-not [bool]$it.invalid -and $rec.invalid) {
                     $rec.invalid = $false
                     $rec.invalid_since = ''
+                    if ($rec.PSObject.Properties['invalid_known']) { $rec.invalid_known = $false }
                 }
             }
             if ($rec.invalid) { $invCount++ }
@@ -1022,20 +1211,37 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
             $seen = @{}
             foreach ($it in $items) { $seen[(Get-FavKey $it)] = $true }
             $removedCount = 0
+            $ft = [string]$folder.title
             foreach ($k2 in @($master.Keys)) {
                 $rec2 = $master[$k2]
-                if ([long]$rec2.folder_id -ne [long]$folder.id) { continue }
+                # Membership is per folder: leaving one folder is not "removed"
+                # as long as the video is still in another one.
+                $fl2 = @($rec2.folders)
+                if (-not $fl2 -or $fl2.Count -eq 0) {
+                    $fl2 = @([string]$rec2.folder)
+                    # Rows written before the folders array existed have no
+                    # membership list; fall back to their single folder_id.
+                    if ([long]$rec2.folder_id -ne [long]$folder.id) { continue }
+                } elseif ($fl2 -notcontains $ft -and [long]$rec2.folder_id -ne [long]$folder.id) {
+                    continue
+                }
                 $hasProp = $rec2.PSObject.Properties.Name -contains 'removed_at'
                 if ($seen.ContainsKey($k2)) {
                     if ($hasProp -and $rec2.removed_at) { $rec2.removed_at = '' }
-                } else {
-                    if (-not $hasProp) {
-                        $rec2 | Add-Member -NotePropertyName removed_at -NotePropertyValue $now -Force
-                        $removedCount++
-                    } elseif (-not $rec2.removed_at) {
-                        $rec2.removed_at = $now
-                        $removedCount++
-                    }
+                    continue
+                }
+                if (-not $rec2.PSObject.Properties['folders']) {
+                    $rec2 | Add-Member -NotePropertyName folders -NotePropertyValue @($fl2) -Force
+                }
+                $left = @($fl2 | Where-Object { $_ -ne $ft })
+                $rec2.folders = @($left)
+                if ($left.Count -gt 0) { continue }
+                if (-not $hasProp) {
+                    $rec2 | Add-Member -NotePropertyName removed_at -NotePropertyValue $now -Force
+                    $removedCount++
+                } elseif (-not $rec2.removed_at) {
+                    $rec2.removed_at = $now
+                    $removedCount++
                 }
             }
             if ($removedCount -gt 0) { Write-Log ("  {0} item(s) marked removed from this folder" -f $removedCount) }
@@ -1048,6 +1254,7 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
         Write-Log ("  saved: new={0} invalid={1} md-rows={2} master={3}" -f $newCount, $invCount, $written, $totalNow)
         $grandNew += $newCount
         $grandInv += $invCount
+        $grandNewInvalid += $newInvalid
     }
 
     if ($WithCover) {
@@ -1097,7 +1304,7 @@ param([int]$Port, [object[]]$Folders, [int]$MaxPages, [int]$CoverWidth, [bool]$W
         Write-Log ("heat: total={0} added={1} updated={2} skipped={3}" -f $hr.Total, $hr.Added, $hr.Updated, $hr.Skipped)
     }
 
-    return [pscustomobject]@{ Total = $total; New = $grandNew }
+    return [pscustomobject]@{ Total = $total; New = $grandNew; NewInvalid = $grandNewInvalid }
 }
 
 # ---------------------------------------------------------------- enrich
@@ -1182,6 +1389,14 @@ Write-Log ("=== start | mode={0} port={1} maxpages={2} ===" -f $(if ($Login) {'l
 
 if (-not (Test-Path $EdgeExe)) { Write-Log "Edge not found at $EdgeExe" 'ERROR'; exit 2 }
 
+# Cheap preflight: when the machine has no usable route, every CDP attempt lands
+# on a browser error page and the run dies without saying why. Wait here first.
+if (-not $Login -and -not $Status) {
+    $netWait = 180
+    if ($Cfg -and $Cfg.NetWaitSec) { $netWait = [int]$Cfg.NetWaitSec }
+    $null = Wait-NetworkReady -MaxSec $netWait -IntervalSec 15
+}
+
 $browser = $null
 try {
     if ($Login) {
@@ -1238,6 +1453,89 @@ try {
         $raw = Invoke-JsRetry -Port $Port -Expression $expr -TimeoutMs 60000
         Write-Host $raw
         Write-Log ('probe: ' + $Probe + ' -> ' + $raw)
+        Stop-Browser -Port $Port -Proc $browser
+        exit 0
+    }
+
+    if ($Dynamic) {
+        # Special-follow dynamics (t.bilibili.com feed), one compact jsonl per day.
+        # The feed endpoint answers without a WBI signature from inside the page
+        # (probed 2026-10-29: code 0), so this path needs no extra signing code.
+        $dirDyn = Join-Path $DataRoot (Get-DirName $Cfg 'Dynamic' ([string][char]0x52a8 + [char]0x6001))
+        if (-not (Test-Path $dirDyn)) { New-Item -ItemType Directory -Force -Path $dirDyn | Out-Null }
+        $outFile = Join-Path $dirDyn ((Get-Date -Format 'yyyy-MM-dd') + '.jsonl')
+
+        $special = @{}
+        $followFile = Join-Path (Join-Path $DataRoot (Get-DirName $Cfg 'Follow' 'follows')) 'members.jsonl'
+        if (Test-Path $followFile) {
+            foreach ($line in [System.IO.File]::ReadLines($followFile, [System.Text.Encoding]::UTF8)) {
+                if (-not $line.Trim()) { continue }
+                try { $r = $line | ConvertFrom-Json } catch { continue }
+                $isSpecial = ([string]$r.tag -eq ([string][char]0x7279 + [char]0x522b + [char]0x5173 + [char]0x6ce8))
+                if (-not $isSpecial) { try { $isSpecial = ([int]$r.tagid -eq -10) } catch { } }
+                if ($isSpecial) { $special[[string]$r.mid] = [string]$r.uname }
+            }
+        }
+        Write-Log ('dynamic: ' + $special.Count + ' special-follow UP(s)')
+
+        $js = @'
+(async () => {
+  const r = await fetch('__URL__', { credentials: 'include' });
+  const j = await r.json();
+  const d = (j && j.data) || {};
+  const items = (d.items || []).map(function (it) {
+    const a = (it.modules && it.modules.module_author) || {};
+    const dy = (it.modules && it.modules.module_dynamic) || {};
+    const mj = dy.major || {};
+    let t = (dy.desc && dy.desc.text) || (mj.archive && mj.archive.title) || (mj.opus && mj.opus.title) || '';
+    return { id: it.id_str, type: it.type, mid: a.mid, uname: a.name, ts: a.pub_ts,
+             major_type: (mj.type || ''), additional_type: (dy.additional_type || ''),
+             title: String(t || '').slice(0, 100) };
+  });
+  return JSON.stringify({ code: j.code, offset: d.offset || '', has_more: !!d.has_more, items: items });
+})()
+'@
+
+        $base = 'https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all?features=itemOpusStyle&page=1'
+        $offset = ''
+        $rows = @()
+        $pages = [Math]::Max(1, $DynamicPages)
+        for ($p = 1; $p -le $pages; $p++) {
+            $u = $base
+            if ($offset) { $u = $u + '&offset=' + [uri]::EscapeDataString($offset) }
+            $expr = $js.Replace('__URL__', $u.Replace('\', '\\').Replace("'", "\'"))
+            $env2 = (Invoke-JsRetry -Port $Port -Expression $expr -TimeoutMs 60000) | ConvertFrom-Json
+            if ([int]$env2.code -ne 0) { Write-Log ('dynamic page ' + $p + ' returned code ' + $env2.code) 'WARN'; break }
+            foreach ($it in @($env2.items)) { if ($it) { $rows += $it } }
+            Write-Log ('dynamic page ' + $p + ': ' + @($env2.items).Count + ' item(s), more=' + $env2.has_more)
+            $offset = [string]$env2.offset
+            if (-not $env2.has_more -or -not $offset) { break }
+        }
+
+        $seen = @{}
+        if (Test-Path $outFile) {
+            foreach ($l in [System.IO.File]::ReadLines($outFile, [System.Text.Encoding]::UTF8)) {
+                if ($l -match '"id":"([^"]+)"') { $seen[$matches[1]] = 1 }
+            }
+        }
+        $enc = New-Object System.Text.UTF8Encoding($false)
+        $matched = @($rows | Where-Object { $special.ContainsKey([string]$_.mid) })
+        $authors = @($rows | ForEach-Object { [string]$_.mid } | Sort-Object -Unique)
+        $added = 0
+        foreach ($it in $rows) {
+            $mid = [string]$it.mid
+            if (-not $mid -or -not $special.ContainsKey($mid)) { continue }
+            $id = [string]$it.id
+            if (-not $id -or $seen.ContainsKey($id)) { continue }
+            $ts = 0
+            try { $ts = [long]$it.ts } catch { }
+            $when = if ($ts -gt 0) { ([datetimeoffset]::FromUnixTimeSeconds($ts)).LocalDateTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            $rec = [ordered]@{ id = $id; type = [string]$it.type; mid = $mid; uname = [string]$it.uname; pub_time = $when; ts = $ts; major_type = [string]$it.major_type; additional_type = [string]$it.additional_type; title = [string]$it.title; url = ('https://t.bilibili.com/' + $id) }
+            [System.IO.File]::AppendAllText($outFile, (($rec | ConvertTo-Json -Compress) + "`r`n"), $enc)
+            $seen[$id] = 1
+            $added++
+        }
+        Write-Log ('dynamic: ' + $rows.Count + ' fetched from ' + $authors.Count + ' author(s), ' + $matched.Count + ' from special-follow, ' + $added + ' new, file=' + $outFile)
         Stop-Browser -Port $Port -Proc $browser
         exit 0
     }
@@ -1452,6 +1750,11 @@ try {
     if ($FavFolders) {
         $ff = Get-FavFolders -Port $Port
         if ($null -eq $ff) { Write-Log "favfolders: failed" "ERROR"; Stop-Browser -Port $Port -Proc $browser; exit 4 }
+        try {
+            $orderNames = @($ff | ForEach-Object { [string]$_.title })
+            [System.IO.File]::WriteAllText((Join-Path $DirFav 'folder-order.json'), ($orderNames | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+            Write-Log ('folder order saved: ' + $orderNames.Count + ' folder(s)')
+        } catch { Write-Log ('folder order write failed: ' + $_.Exception.Message) 'WARN' }
         $raw = ($ff | ConvertTo-Json -Depth 4 -Compress)
         Stop-Browser -Port $Port -Proc $browser
         exit 0
@@ -1461,6 +1764,12 @@ try {
         $foldersRaw = Get-FavFolders -Port $Port
         if ($null -eq $foldersRaw) { throw "folder list failed" }
         $folders = @($foldersRaw)
+        # Persist the raw API order (the user's own folder order) for the
+        # settings page, independent of this run's filters.
+        try {
+            $orderNames = @($foldersRaw | ForEach-Object { [string]$_.title })
+            [System.IO.File]::WriteAllText((Join-Path $DirFav 'folder-order.json'), ($orderNames | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
+        } catch { }
         $fj = [pscustomobject]@{ ok = $true }
         if ($FavOnly -and $FavOnly.Count -gt 0) {
             $folders = @($folders | Where-Object {
@@ -1469,32 +1778,35 @@ try {
                 $hit
             })
         }
-        # Weight every folder: 0 = skip by default, 3 = refresh first. The rules
-        # live in config.json (FolderWeight), so no personal folder name is baked
-        # into this script or into the example config.
+        # Per-folder plan: the settings page owns the order and the level
+        # (full / daily / skip). FolderWeight stays as the fallback for folders
+        # the plan does not mention, so older configs keep working.
         foreach ($f in $folders) {
             $wf = Get-FolderWeight -Cfg $Cfg -Name ([string]$f.title)
             $f | Add-Member -NotePropertyName weight -NotePropertyValue $wf -Force
+            $lv = Get-FavPlanLevel -Cfg $Cfg -Name ([string]$f.title)
+            $f | Add-Member -NotePropertyName level -NotePropertyValue $lv -Force
         }
-        if (-not $IncludeLow -and -not $Force) {
+        if (-not $Force) {
             $before = $folders.Count
-            $folders = @($folders | Where-Object { [int]$_.weight -gt 0 })
+            if ($FavIncremental) {
+                # incremental run: skip means never, daily and full both collect
+                $folders = @($folders | Where-Object { [string]$_.level -ne 'skip' })
+            } else {
+                # weekly full run: daily folders are incremental-only
+                $folders = @($folders | Where-Object { [string]$_.level -eq 'full' })
+            }
             if ($before -ne $folders.Count) {
-                Write-Log ("weight filter: skipped {0} folder(s) with weight 0" -f ($before - $folders.Count))
+                Write-Log ("plan filter: skipped {0} folder(s)" -f ($before - $folders.Count))
             }
         }
-        # Higher weight first, then the user's stated folder order, so a -Top run
-        # refreshes what matters and the low-value tail can wait.
-        $prio = @()
-        if ($Cfg.FolderPriority) { $prio = @($Cfg.FolderPriority) }
-        $folders = @($folders | Sort-Object -Property @{ Expression = { - [int]$_.weight } }, @{ Expression = {
-                $t = [string]$_.title
-                $r = 999
-                for ($pi = 0; $pi -lt $prio.Count; $pi++) {
-                    if ($t -like ('*' + $prio[$pi] + '*')) { $r = $pi; break }
-                }
-                $r
-            } })
+        # Plan order first (the drag order in the settings page), then weight.
+        # With no plan yet the API order is kept, i.e. the user's own order.
+        $folders = @($folders | Sort-Object -Property @{ Expression = {
+                $r = Get-FavPlanRank -Cfg $Cfg -Name ([string]$_.title)
+                if ($r -ge 0) { return $r }
+                return 999
+            } }, @{ Expression = { - [int]$_.weight } })
         Write-Log ('priority order: ' + (($folders | ForEach-Object { $_.title }) -join ' > '))
         if ($Top -gt 0 -and $folders.Count -gt $Top) {
             $folders = @($folders | Select-Object -First $Top)
@@ -1513,8 +1825,11 @@ try {
             $en = Invoke-Enrich -Max $em -DelayMs $ed
             Write-Log ("=== enrich done | requested={0} ok={1} fail={2} ===" -f $en.Requested, $en.Ok, $en.Fail)
         }
-        Write-Log ("=== fav done | total={0} new={1} ===" -f $favRes.Total, $favRes.New)
-        Write-RunResult -Mode 'fav' -ExitCode 0 -Extra @{ total = $favRes.Total; added = $favRes.New; folders = $folders.Count }
+        Write-Log ("=== fav done | total={0} new={1} invalid-new={2} ===" -f $favRes.Total, $favRes.New, $favRes.NewInvalid)
+        Write-RunResult -Mode 'fav' -ExitCode 0 -Extra @{ total = $favRes.Total; added = $favRes.New; folders = $folders.Count; newInvalid = $favRes.NewInvalid }
+        $notifyInvalid = $true
+        if ($Cfg.PSObject.Properties['NotifyInvalid'] -and $null -ne $Cfg.NotifyInvalid) { $notifyInvalid = [bool]$Cfg.NotifyInvalid }
+        if ($notifyInvalid -and $favRes.NewInvalid -gt 0) { [void](Show-InvalidToast -Count ([int]$favRes.NewInvalid)) }
         exit 0
     }
 

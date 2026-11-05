@@ -55,3 +55,53 @@ function Get-FolderWeight {
     if ($w -gt 3) { $w = 3 }
     return $w
 }
+
+<#
+  Folder plan: the settings page writes an explicit ordered list
+  (config.json -> FavFolderPlan) of { name, level } entries. The list carries
+  both the collection order and the per-folder level:
+
+    full   collect on the incremental and the weekly full run (default)
+    daily  collect only on the incremental run
+    skip   never collect
+
+  A folder that is not listed falls back to the FolderWeight rule (weight 0
+  means skip), so older configs keep working.
+#>
+function Get-FavPlanEntry {
+    param($Cfg, [string]$Name)
+    if (-not $Cfg -or -not $Cfg.PSObject.Properties['FavFolderPlan'] -or -not $Cfg.FavFolderPlan) { return $null }
+    foreach ($e in @($Cfg.FavFolderPlan)) {
+        if ($e -and ([string]$e.name) -eq $Name) { return $e }
+    }
+    return $null
+}
+
+function Get-FavPlanLevel {
+    param($Cfg, [string]$Name)
+    $e = Get-FavPlanEntry -Cfg $Cfg -Name $Name
+    if ($e) {
+        $lv = [string]$e.level
+        if ($lv -in @('full', 'daily', 'skip')) { return $lv }
+        return 'full'
+    }
+    # An explicit plan is authoritative: directories the plan does not mention
+    # (a folder created after the last save) default to full. The legacy weight
+    # rule only applies when there is no plan at all, otherwise LowPriorityFolders
+    # patterns like "friends" would silently skip every "friends*" folder.
+    if ($Cfg -and $Cfg.PSObject.Properties['FavFolderPlan'] -and $Cfg.FavFolderPlan) { return 'full' }
+    $w = Get-FolderWeight -Cfg $Cfg -Name $Name
+    if ($w -le 0) { return 'skip' }
+    return 'full'
+}
+
+function Get-FavPlanRank {
+    param($Cfg, [string]$Name)
+    if (-not $Cfg -or -not $Cfg.PSObject.Properties['FavFolderPlan'] -or -not $Cfg.FavFolderPlan) { return -1 }
+    $i = 0
+    foreach ($e in @($Cfg.FavFolderPlan)) {
+        if ($e -and ([string]$e.name) -eq $Name) { return $i }
+        $i++
+    }
+    return -1
+}

@@ -74,6 +74,11 @@ foreach ($f in $files) {
 }
 
 if ($bad -gt 0) {
+    if ($Fix) {
+        # WriteAllText above throws on failure, so reaching here means repaired.
+        Write-Host ('FIXED: ' + $bad + ' file(s).')
+        exit 0
+    }
     Write-Host ('FAILED: ' + $bad + ' file(s). Run with -Fix to repair.')
     exit 1
 }

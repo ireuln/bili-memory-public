@@ -91,7 +91,9 @@ $MenuHelp = Lbl 'menuHelp' 'Open help'
 $MenuSettings = Lbl 'menuSettings' 'Features & settings'
 $MenuUpdate = Lbl 'menuUpdate' 'Check for updates'
 $MenuExit = Lbl 'menuExit' 'Exit'
+$MenuLogin = Lbl 'menuLogin' '扫码登录'
 $MenuData = Lbl 'menuData' '数据速览'
+$MenuWatch = Lbl 'menuWatch' '评论监控'
 $MenuSettingsGroup = Lbl 'menuSettingsGroup' '设置'
 $PopupTitle = Lbl 'popupTitle' '数据速览'
 $PopupEmpty = Lbl 'popupEmpty' '还没有数据，先采集一次'
@@ -188,7 +190,7 @@ $script:frameCache = @{}
 $script:frames = @()
 $script:frameIdx = 0
 $script:currentColor = ''
-$script:popup = $null
+$script:popup = $null; $script:popupUpdate = $null
 $script:popupPinned = $false
 $script:popupTimer = $null
 $script:popupWasRunning = $null
@@ -206,6 +208,8 @@ $script:jobScanTick = 0
 # Settings sits alone behind a separator and its own submenu so that a routine
 # action ("collect now") can never be mis-clicked for a configuration change.
 $context = New-Object System.Windows.Forms.ContextMenuStrip
+$miLogin = $context.Items.Add($MenuLogin)
+[void]$context.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $miHistory = $context.Items.Add($MenuHistory)
 $miFav = $context.Items.Add($MenuFav)
 $miFollow = $context.Items.Add($MenuFollow)
@@ -217,6 +221,7 @@ $miBackup = $context.Items.Add($MenuBackup)
 $miCold = $context.Items.Add($MenuCold)
 [void]$context.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $miData = $context.Items.Add($MenuData)
+$miWatch = $context.Items.Add($MenuWatch)
 $miOpen = $context.Items.Add($MenuOpen)
 $miLog = $context.Items.Add($MenuLog)
 $miHelp = $context.Items.Add($MenuHelp)
@@ -383,7 +388,12 @@ function Update-Tray {
             }
             elseif ($brief.Length -gt 120) { $brief = $brief.Substring(0, 120) + '…' }
             if (-not $brief) { $brief = '这次采集没有成功，详情见日志。' }
-            Show-Notice '采集失败' $brief 'info'
+            # Prefer a system toast: it lands in the notification centre and does
+            # not steal focus. Only fall back to the modal box when WinRT is
+            # unavailable (old Windows, locked-down policy).
+            if (-not (Show-ToastNotice -Title ($TxtOk + ' · ' + $TxtFail) -Body $brief)) {
+                Show-Notice '采集失败' $brief 'info'
+            }
             $script:lastFailStamp = $failStamp
         }
     }
@@ -434,7 +444,7 @@ function Get-ArchiveSnapshot {
     # instead of parsing every line as JSON, and it skips any jsonl that is not
     # named YYYY-MM (稍后观看.jsonl has no view_at and used to inflate numbers).
     $snap = [pscustomobject]@{
-        Watch = 0; WatchMonth = 0; Watch7 = 0; ActiveDays7 = 0
+        Watch = 0; WatchMonth = 0; Watch7 = 0; ActiveDays7 = 0; Today = 0
         Fav = 0; FavInvalid = 0
         Bytes = [int64]0
         State = 'unknown'; Ended = ''; LastMode = ''
@@ -444,6 +454,7 @@ function Get-ArchiveSnapshot {
     $coverDir = Join-Path $DataRoot (Get-CfgDir 'Cover' '封面图')
     $monthKey = (Get-Date).ToString('yyyy-MM')
     $weekAgo = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 7 * 86400
+    $todayStart = [int64](((Get-Date).Date.ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds)
     $days = @{}
     if (Test-Path -LiteralPath $histDir) {
         foreach ($f in (Get-ChildItem -LiteralPath $histDir -Filter '*.jsonl' -File -ErrorAction SilentlyContinue)) {
@@ -453,6 +464,7 @@ function Get-ArchiveSnapshot {
             foreach ($m in [regex]::Matches($text, '"view_at"\s*:\s*(\d+)')) {
                 $n++
                 $t = [int64]$m.Groups[1].Value
+                if ($t -ge $todayStart) { $snap.Today++ }
                 if ($t -ge $weekAgo) {
                     $snap.Watch7++
                     $days[[math]::Floor($t / 86400)] = 1
@@ -538,7 +550,7 @@ function Start-PopupTimer {
         if ($running) {
             $script:popupWasRunning = $true
             $script:popupCloseAt = $null
-            $script:popup.Invalidate()
+            if ($script:popupUpdate) { & $script:popupUpdate } else { $script:popup.Invalidate() }
             return
         }
         if ($script:popupWasRunning) {
@@ -567,6 +579,20 @@ function Get-RunningJobs {
         }
     } catch { }
     return @($jobs)
+}
+
+function Get-CardFlag {
+    # Card switches live in config.Tray.Card; a missing key keeps the default so
+    # older configs show the recently-first layout without any migration.
+    param([string]$Key, [bool]$Default = $true)
+    if ($Cfg -and $Cfg.PSObject.Properties['Tray'] -and $Cfg.Tray) {
+        $card = $Cfg.Tray.PSObject.Properties['Card']
+        if ($card -and $card.Value) {
+            $p = $card.Value.PSObject.Properties[$Key]
+            if ($p -and $null -ne $p.Value) { return [bool]$p.Value }
+        }
+    }
+    return $Default
 }
 
 function Get-PopupHeight {
@@ -609,8 +635,8 @@ function Get-ShortTime {
 }
 
 function Get-PopupPalette {
-    # Same tokens as the settings window: the card follows the Windows
-    # light/dark setting instead of being permanently dark.
+    # Same tokens as src\Theme.cs: the card follows the Windows light/dark
+    # setting instead of being permanently dark.
     $dark = $true
     try {
         $k = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -ErrorAction SilentlyContinue
@@ -638,7 +664,331 @@ function Get-PopupPalette {
     }
 }
 
+function New-WpfBrush {
+    param([System.Drawing.Color]$Color, [int]$Alpha = 255)
+    return [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb($Alpha, $Color.R, $Color.G, $Color.B))
+}
+
+function New-PopupView {
+    # XAML shell for the data card. Data is pushed in by Update-PopupView, so the
+    # layout stays declarative and adding a row does not touch drawing code.
+    $xaml = @'
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="Transparent" TextElement.FontFamily="Microsoft YaHei UI">
+  <Grid Margin="16,12,16,12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <Grid Grid.Row="0">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Ellipse x:Name="StatusDot" Width="8" Height="8" VerticalAlignment="Center"/>
+        <TextBlock x:Name="TitleText" Text="数据速览" FontSize="13.5" FontWeight="SemiBold" Margin="8,0,0,0"/>
+      </StackPanel>
+      <TextBlock x:Name="CloseBtn" Text="×" FontSize="16" HorizontalAlignment="Right"
+                 VerticalAlignment="Top" Cursor="Hand"/>
+    </Grid>
+    <StackPanel x:Name="BandPanel" Grid.Row="1" Orientation="Vertical"/>
+    <Grid Grid.Row="2" Margin="0,14,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/><ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <StackPanel Grid.Row="0" Grid.Column="0">
+        <TextBlock x:Name="L1" Text="累计观看" FontSize="10.5"/>
+        <TextBlock x:Name="V1" Text="—" FontSize="22" FontWeight="Bold" Margin="0,1,0,0"/>
+      </StackPanel>
+      <StackPanel Grid.Row="0" Grid.Column="1">
+        <TextBlock x:Name="L2" Text="本月" FontSize="10.5"/>
+        <TextBlock x:Name="V2" Text="—" FontSize="22" FontWeight="Bold" Margin="0,1,0,0"/>
+      </StackPanel>
+      <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,6,0,0">
+        <TextBlock x:Name="L3" Text="收藏" FontSize="10.5"/>
+        <TextBlock x:Name="V3" Text="—" FontSize="22" FontWeight="Bold" Margin="0,1,0,0"/>
+      </StackPanel>
+      <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,6,0,0">
+        <TextBlock x:Name="L4" Text="失效" FontSize="10.5"/>
+        <TextBlock x:Name="V4" Text="—" FontSize="22" FontWeight="Bold" Margin="0,1,0,0"/>
+      </StackPanel>
+    </Grid>
+    <Border x:Name="RuleLine" Grid.Row="3" Height="1" Margin="0,12,0,0"/>
+    <Grid Grid.Row="4" Margin="0,8,0,0">
+      <TextBlock x:Name="LastText" Text="上次 未运行" FontSize="11"/>
+      <TextBlock x:Name="NextText" FontSize="11" HorizontalAlignment="Right"/>
+    </Grid>
+    <TextBlock x:Name="RotText" Grid.Row="5" FontSize="11" Margin="0,3,0,0"/>
+  </Grid>
+</Grid>
+'@
+    $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml))
+    return [Windows.Markup.XamlReader]::Load($reader)
+}
+
+function Update-PopupView {
+    param($Root, $Snap, $Jobs, [string]$NextText)
+    if (-not $Root -or -not $Snap) { return }
+    $pal = Get-PopupPalette
+    $s = $Snap
+    $Root.Background = New-WpfBrush $pal.Card
+
+    $Root.FindName('TitleText').Foreground = New-WpfBrush $pal.Title
+    $Root.FindName('CloseBtn').Foreground = New-WpfBrush $pal.Dim
+
+    $liveState = 'unknown'
+    $bands = @()
+    $st = Get-Status
+    if (@($Jobs).Count -gt 0) {
+        $liveState = 'running'
+        foreach ($j in (@($Jobs) | Select-Object -First 3)) {
+            $verb = '正在采集'
+            if ($j.Mode -eq 'backup' -or $j.Mode -eq 'cold') { $verb = '正在备份' }
+            $jobStart = ''
+            try { $jobStart = $j.Started.ToString('yyyy-MM-dd HH:mm:ss') } catch { }
+            $bands += @{ Color = [System.Drawing.Color]::FromArgb(240, 176, 32); Title = ($verb + '：' + (Get-ModeLabel $j.Mode)); Right = ('已用 ' + (Get-ElapsedText $jobStart)) }
+        }
+    }
+    if ($bands.Count -eq 0) {
+        if ($st) {
+            $modeLabel = Get-ModeLabel ([string]$st.mode)
+            switch ([string]$st.state) {
+                'running' {
+                    $liveState = 'fail'
+                    $bands += @{ Color = [System.Drawing.Color]::FromArgb(224, 62, 74); Title = '上次运行未正常结束'; Right = '' }
+                }
+                'ok' {
+                    $liveState = 'ok'
+                    $bTitle = '上次成功'
+                    if ($modeLabel) { $bTitle = '上次成功：' + $modeLabel }
+                    $bands += @{ Color = [System.Drawing.Color]::FromArgb(58, 176, 92); Title = $bTitle; Right = (Get-ShortTime ([string]$st.ended)) }
+                }
+                default {
+                    $liveState = 'fail'
+                    $bands += @{ Color = [System.Drawing.Color]::FromArgb(224, 62, 74); Title = $TxtFail; Right = (Get-ShortTime ([string]$st.ended)) }
+                }
+            }
+        } else {
+            $bands += @{ Color = [System.Drawing.Color]::FromArgb(150, 146, 164); Title = $TxtUnknown; Right = '' }
+        }
+    }
+    $script:popupState = $liveState
+    $accent = $bands[0].Color
+    $Root.FindName('StatusDot').Fill = New-WpfBrush $accent
+
+    $panel = $Root.FindName('BandPanel')
+    $panel.Children.Clear()
+    foreach ($b in $bands) {
+        $border = New-Object System.Windows.Controls.Border
+        $border.CornerRadius = [System.Windows.CornerRadius]::new(8)
+        $border.Padding = [System.Windows.Thickness]::new(12, 8, 12, 8)
+        $border.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
+        $border.Background = New-WpfBrush $b.Color 38
+        $border.BorderBrush = New-WpfBrush $b.Color 130
+        $border.BorderThickness = [System.Windows.Thickness]::new(1)
+        $grid = New-Object System.Windows.Controls.Grid
+        $sp = New-Object System.Windows.Controls.StackPanel
+        $sp.Orientation = 'Horizontal'
+        $dot = New-Object System.Windows.Shapes.Ellipse
+        $dot.Width = 9
+        $dot.Height = 9
+        $dot.Fill = New-WpfBrush $b.Color
+        $dot.VerticalAlignment = 'Center'
+        $tb = New-Object System.Windows.Controls.TextBlock
+        $tb.Text = [string]$b.Title
+        $tb.FontSize = 12
+        $tb.FontWeight = 'SemiBold'
+        $tb.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+        $tb.VerticalAlignment = 'Center'
+        $tb.Foreground = New-WpfBrush $pal.Title
+        $sp.Children.Add($dot)
+        $sp.Children.Add($tb)
+        $grid.Children.Add($sp)
+        if ($b.Right) {
+            $rt = New-Object System.Windows.Controls.TextBlock
+            $rt.Text = [string]$b.Right
+            $rt.FontSize = 12
+            $rt.FontWeight = 'SemiBold'
+            $rt.HorizontalAlignment = 'Right'
+            $rt.VerticalAlignment = 'Center'
+            $rt.Foreground = New-WpfBrush $pal.Title
+            $grid.Children.Add($rt)
+        }
+        $border.Child = $grid
+        $panel.Children.Add($border)
+    }
+
+    $labelBrush = New-WpfBrush $pal.Label
+    $numBrush = New-WpfBrush $pal.Num
+    foreach ($n in @('L1', 'L2', 'L3', 'L4')) { $Root.FindName($n).Foreground = $labelBrush }
+    foreach ($n in @('V1', 'V2', 'V3', 'V4')) { $Root.FindName($n).Foreground = $numBrush }
+    # Recently-first by default: today and the last 7 days lead; totals follow.
+    $items = @()
+    if (Get-CardFlag 'ShowToday' $true) { $items += @{ L = '今天新增'; V = ('{0:N0}' -f $s.Today) } }
+    if (Get-CardFlag 'ShowWeek' $true) { $items += @{ L = '近 7 天'; V = ('{0:N0}' -f $s.Watch7) } }
+    if (Get-CardFlag 'ShowMonth' $false) { $items += @{ L = '本月'; V = ('{0:N0}' -f $s.WatchMonth) } }
+    if (Get-CardFlag 'ShowFav' $true) { $items += @{ L = '收藏'; V = ('{0:N0}' -f $s.Fav) } }
+    if (Get-CardFlag 'ShowInvalid' $true) { $items += @{ L = '失效'; V = ('{0:N0}' -f $s.FavInvalid) } }
+    while ($items.Count -lt 4) { $items += @{ L = ''; V = '' } }
+    for ($i = 0; $i -lt 4; $i++) {
+        $Root.FindName('L' + ($i + 1)).Text = [string]$items[$i].L
+        $Root.FindName('V' + ($i + 1)).Text = [string]$items[$i].V
+    }
+
+    $Root.FindName('RuleLine').Background = New-WpfBrush $pal.Rule
+
+    $lastText = '上次 未运行'
+    if ($st -and [string]$st.state -eq 'running' -and $st.started) {
+        try { $lastText = '开始 ' + ([datetime]::ParseExact([string]$st.started, 'yyyy-MM-dd HH:mm:ss', $null)).ToString('MM-dd HH:mm') } catch { }
+    } elseif ($st) {
+        try { $lastText = '上次 ' + ([datetime]::ParseExact([string]$st.ended, 'yyyy-MM-dd HH:mm:ss', $null)).ToString('MM-dd HH:mm') } catch { }
+    }
+    $Root.FindName('LastText').Text = $lastText
+    $Root.FindName('LastText').Foreground = New-WpfBrush $pal.Label
+    $nextLine = if ($NextText) { '下次 ' + $NextText } else { '' }
+    $Root.FindName('NextText').Text = $nextLine
+    $Root.FindName('NextText').Foreground = New-WpfBrush $pal.Label
+
+    $mb = $s.Bytes / 1MB
+    if ($mb -ge 1024) { $sizeText = '{0:N1} GB' -f ($mb / 1024) }
+    elseif ($mb -ge 10) { $sizeText = '{0:N0} MB' -f $mb }
+    elseif ($mb -ge 1) { $sizeText = '{0:N1} MB' -f $mb }
+    else { $sizeText = '{0:N0} KB' -f ($s.Bytes / 1KB) }
+    $favRate = 0.0
+    if ($s.Fav -gt 0) { $favRate = [double]$s.FavInvalid / [double]$s.Fav }
+    $rotate = @(
+        ('近 7 天 {0:N0} 条 · {1} 天有活动' -f $s.Watch7, $s.ActiveDays7),
+        ('归档 {0}' -f $sizeText),
+        ('失效 {0:N0} 条（占收藏 {1:P0}）' -f $s.FavInvalid, $favRate),
+        ('下次自动采集 {0}' -f $(if ($NextText) { $NextText } else { '未注册' }))
+    )
+    $rot = 0
+    try { $rot = [int]([math]::Floor(((Get-Date) - $script:popupShown).TotalSeconds / 6)) % $rotate.Count } catch { $rot = 0 }
+    $Root.FindName('RotText').Text = $rotate[$rot]
+    $Root.FindName('RotText').Foreground = New-WpfBrush $pal.Dim
+    if (-not (Get-CardFlag 'ShowStatus' $true)) {
+        $Root.FindName('BandPanel').Visibility = [System.Windows.Visibility]::Collapsed
+    }
+    if (-not (Get-CardFlag 'ShowTimes' $true)) {
+        $Root.FindName('RuleLine').Visibility = [System.Windows.Visibility]::Collapsed
+        $Root.FindName('LastText').Visibility = [System.Windows.Visibility]::Collapsed
+        $Root.FindName('NextText').Visibility = [System.Windows.Visibility]::Collapsed
+    }
+    if (-not (Get-CardFlag 'ShowRotate' $true)) {
+        $Root.FindName('RotText').Visibility = [System.Windows.Visibility]::Collapsed
+    }
+}
+
 function Show-DataPopup {
+    # WPF card first; the GDI card stays as a fallback for locked-down profiles.
+    param([switch]$Auto, [switch]$Hover)
+    try {
+        Show-DataPopupWpf -Auto:$Auto -Hover:$Hover
+    } catch {
+        try { Write-AppLog -Cfg $Cfg -Root $Root -Level error -Message ('wpf popup failed, using gdi: ' + $_.Exception.Message) } catch { }
+        Show-DataPopupGdi -Auto:$Auto -Hover:$Hover
+    }
+}
+
+function Show-DataPopupWpf {
+    param([switch]$Auto, [switch]$Hover)
+    if ($script:popup -and -not $script:popup.IsDisposed) {
+        if (-not $Auto) { $script:popup.Close(); return }
+        $script:popup.BringToFront()
+        return
+    }
+    Add-Type -AssemblyName PresentationFramework, WindowsBase, WindowsFormsIntegration
+    $snap = Get-ArchiveSnapshot
+    $script:popupSnap = $snap
+    $script:popupState = $snap.State
+    $script:popupShown = Get-Date
+    $script:nextRunText = ''
+    try {
+        $ti = Get-ScheduledTask -TaskName 'DSH-BiliHistory' -ErrorAction SilentlyContinue | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+        if ($ti -and $ti.NextRunTime) { $script:nextRunText = ([datetime]$ti.NextRunTime).ToString('MM-dd HH:mm') }
+    } catch { }
+    $script:jobs = @(Get-RunningJobs)
+    $script:popupJobCount = $script:jobs.Count
+    $pal = Get-PopupPalette
+    $w = 400
+    $h = Get-PopupHeight $script:jobs.Count
+
+    $f = New-Object System.Windows.Forms.Form
+    $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $f.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $f.ShowInTaskbar = $false
+    $f.TopMost = $true
+    $f.Width = $w
+    $f.Height = $h
+    $f.BackColor = $pal.Card
+    $gp = New-RoundedPath -Rect (New-Object System.Drawing.RectangleF 0, 0, $w, $h) -Radius 10
+    $f.Region = New-Object System.Drawing.Region -ArgumentList $gp
+
+    $scr = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+    $wa = $scr.WorkingArea
+    $bd = $scr.Bounds
+    $margin = 12
+    if ($wa.Right -lt $bd.Right) { $x = $wa.Right - $w - $margin; $y = $wa.Bottom - $h - $margin }
+    elseif ($wa.Left -gt $bd.Left) { $x = $wa.Left + $margin; $y = $wa.Bottom - $h - $margin }
+    elseif ($wa.Top -gt $bd.Top) { $x = $wa.Right - $w - $margin; $y = $wa.Top + $margin }
+    else { $x = $wa.Right - $w - $margin; $y = $wa.Bottom - $h - $margin }
+    if ($x -lt $wa.Left + 8) { $x = $wa.Left + 8 }
+    if ($y -lt $wa.Top + 8) { $y = $wa.Top + 8 }
+    $f.Left = $x
+    $f.Top = $y
+
+    $root = New-PopupView
+    $eh = New-Object System.Windows.Forms.Integration.ElementHost
+    $eh.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $eh.BackColor = $pal.Card
+    $eh.Child = $root
+    $f.Controls.Add($eh)
+    $script:popupRoot = $root
+    $script:popupUpdate = { Update-PopupView -Root $script:popupRoot -Snap $script:popupSnap -Jobs $script:jobs -NextText $script:nextRunText }
+
+    $closeBtn = $root.FindName('CloseBtn')
+    $closeBtn.Add_MouseDown({ param($sender, $e) try { if ($f -and -not $f.IsDisposed) { $f.Close() } } catch { } })
+
+    $f.Add_Deactivate({
+        if ($script:popupPinned) { return }
+        if ($script:popup -and (((Get-Date) - $script:popupShown).TotalMilliseconds -gt 250)) { $script:popup.Close() }
+    })
+    $f.Add_KeyDown({
+        param($sender, $e)
+        try {
+            if (-not $e -or $e.KeyCode -ne [System.Windows.Forms.Keys]::Escape) { return }
+            if ($sender -and -not $sender.IsDisposed) { $sender.Close() }
+        } catch { }
+    })
+    $f.Add_FormClosed({
+        $script:popup = $null; $script:popupUpdate = $null
+        $script:popupUpdate = $null
+        $script:popupRoot = $null
+        if ($script:popupTimer) { $script:popupTimer.Stop(); $script:popupTimer = $null }
+        if ($script:rotTimer) { $script:rotTimer.Stop(); $script:rotTimer.Dispose(); $script:rotTimer = $null }
+    })
+
+    $script:popup = $f
+    $script:popupWasRunning = $null
+    $script:popupCloseAt = $null
+    $script:popupPinned = $false
+    if ($Auto) {
+        $script:popupPinned = $true
+        $script:autoUnpinAt = (Get-Date).AddSeconds(8)
+    }
+    $f.Show()
+    if ($PreviewSeconds -le 0 -and -not $Hover) { $f.Activate() }
+    & $script:popupUpdate
+
+    $script:rotTimer = New-Object System.Windows.Forms.Timer
+    $script:rotTimer.Interval = 6000
+    $script:rotTimer.add_Tick({ if ($script:popup -and -not $script:popup.IsDisposed) { & $script:popupUpdate } })
+    $script:rotTimer.Start()
+}
+
+
+function Show-DataPopupGdi {
     param([switch]$Auto, [switch]$Hover)
     # Toggle: a second double-click closes the card instead of stacking one more.
     if ($script:popup -and -not $script:popup.IsDisposed) {
@@ -914,7 +1264,7 @@ function Show-DataPopup {
         }
     })
     $f.Add_FormClosed({
-        $script:popup = $null
+        $script:popup = $null; $script:popupUpdate = $null
         if ($script:popupTimer) { $script:popupTimer.Stop(); $script:popupTimer = $null }
         if ($script:rotTimer) { $script:rotTimer.Stop(); $script:rotTimer.Dispose(); $script:rotTimer = $null }
     })
@@ -938,7 +1288,7 @@ function Show-DataPopup {
     # Repaint every 6 s so the rotating line changes while the card is open.
     $script:rotTimer = New-Object System.Windows.Forms.Timer
     $script:rotTimer.Interval = 6000
-    $script:rotTimer.add_Tick({ if ($script:popup -and -not $script:popup.IsDisposed) { $script:popup.Invalidate() } })
+    $script:rotTimer.add_Tick({ if ($script:popup -and -not $script:popup.IsDisposed) { if ($script:popupUpdate) { & $script:popupUpdate } else { $script:popup.Invalidate() } } })
     $script:rotTimer.Start()
 
     # Repainting only makes sense while a job runs (the clock moves); when the
@@ -985,6 +1335,32 @@ function Play-SoftChime {
     } catch { }
 }
 
+function Show-ToastNotice {
+    # Non-modal system toast (WinRT). Returns $false when this machine cannot
+    # show one, so callers can fall back to a message box or balloon.
+    param([string]$Title, [string]$Body)
+    try {
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction Stop
+        $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+        $aumid = 'Bimpression'
+        $reg = 'HKCU:\Software\Classes\AppUserModelId\' + $aumid
+        if (-not (Test-Path $reg)) {
+            New-Item -Path $reg -Force | Out-Null
+            New-ItemProperty -Path $reg -Name 'DisplayName' -Value 'Bimpression' -PropertyType String -Force | Out-Null
+        }
+        $safeTitle = [System.Security.SecurityElement]::Escape([string]$Title)
+        $safeBody = [System.Security.SecurityElement]::Escape([string]$Body)
+        $xml = '<toast><visual><binding template="ToastGeneric"><text>' + $safeTitle + '</text><text>' + $safeBody + '</text></binding></visual></toast>'
+        $doc = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $doc.LoadXml($xml)
+        $toast = New-Object Windows.UI.Notifications.ToastNotification $doc
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($toast)
+        return $true
+    } catch {
+        return $false
+    }
+}
 function Show-Notice {
     param([string]$Title, [string]$Text, [string]$Kind = 'info')
     $mode = Get-SoundMode
@@ -998,6 +1374,21 @@ function Show-Notice {
     [void][System.Windows.Forms.MessageBox]::Show($Text, ($prefix + $Title), 'OK', 'None')
 }
 function Open-SettingsGui {
+    param([string]$Section = '')
+    # Settings now live in a local web page (loopback only). The tiny server
+    # opens the browser and exits on its own after an idle period, so nothing
+    # has to be tracked here.
+    $srv = Join-Path $Root 'settings-server.ps1'
+    if (Test-Path $srv) {
+        $sp = New-Object System.Diagnostics.ProcessStartInfo
+        $sp.FileName = $env:SystemRoot + '\System32\WindowsPowerShell\v1.0\powershell.exe'
+        $sp.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $srv + '"'
+        if ($Section) { $sp.Arguments = $sp.Arguments + ' -Section ' + $Section }
+        $sp.WorkingDirectory = $Root
+        $sp.UseShellExecute = $false
+        [void][System.Diagnostics.Process]::Start($sp)
+        return
+    }
     # The launcher's name is non-ASCII, so never hardcode it: a script read
     # under the ANSI code page would look for "B鍗拌薄.exe" and Start-Process
     # would throw "cannot run this command: the system cannot find the file".
@@ -1088,6 +1479,7 @@ function Invoke-Safe {
     }
 }
 
+$miLogin.add_Click({ Invoke-Safe { Start-Login } $MenuLogin })
 $miFav.add_Click({ Invoke-Safe { Start-Run 'fav' } $MenuFav })
 $miFollow.add_Click({ Invoke-Safe { Start-Run 'follow' } $MenuFollow })
 $miReport.add_Click({ Invoke-Safe { Start-ScriptVisible 'report.ps1' } $MenuReport })
@@ -1095,6 +1487,7 @@ $miShare.add_Click({ Invoke-Safe { Start-ShareCard } $MenuShare })
 $miBackup.add_Click({ Invoke-Safe { Start-Run 'backup' } $MenuBackup })
 $miCold.add_Click({ Invoke-Safe { Start-Run 'cold' } $MenuCold })
 $miData.add_Click({ Invoke-Safe { Show-DataPopup } $MenuData })
+$miWatch.add_Click({ Invoke-Safe { Open-SettingsGui -Section 'watch' } $MenuWatch })
 $miOpen.add_Click({
     Invoke-Safe {
         if (-not (Test-Path -LiteralPath $DataRoot)) { New-Item -ItemType Directory -Path $DataRoot -Force | Out-Null }
@@ -1122,6 +1515,7 @@ $miExit.add_Click({
 # Double-click now opens the data card; the log moved into the menu where it is
 # a deliberate choice rather than an accident of double-clicking.
 $tray.add_DoubleClick({ Invoke-Safe { Show-DataPopup } $MenuData })
+$tray.add_BalloonTipClicked({ Invoke-Safe { Open-SettingsGui -Section 'watch' } $MenuWatch })
 
 # A hover card must never sit on top of the tray menu: close it as soon as the
 # menu opens or the user presses a mouse button on the icon.
@@ -1203,6 +1597,25 @@ $tray.add_MouseMove({
     } catch { }
 })
 
+function Start-Login {
+    # First-run path: open the dedicated Edge window for the QR login. The
+    # collector closes that window once the login is detected; the tray only
+    # has to say what is happening and log the action.
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $collector = Join-Path $Root 'collect.ps1'
+    if (-not (Test-Path $collector)) {
+        Show-Notice $MenuLogin 'collect.ps1 缺失，无法登录。' 'error'
+        return
+    }
+    Start-Process -FilePath $ps -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $collector + '"'), '-Login'
+    ) | Out-Null
+    Write-AppLog -Cfg $Cfg -Root $Root -Level info -Message 'tray action: collect -Login'
+    try {
+        $tray.ShowBalloonTip(6000, 'B印象', '已打开登录窗口，请用手机 B 站 App 扫码；登录成功后窗口会自动关闭。', [System.Windows.Forms.ToolTipIcon]::Info)
+    } catch { }
+}
+
 function Start-Run {
     param([string]$Mode)
 
@@ -1247,6 +1660,36 @@ $statusTimer = New-Object System.Windows.Forms.Timer
 $statusTimer.Interval = 5000
 $statusTimer.add_Tick({ Update-Tray })
 $statusTimer.Start()
+
+# --- comment watch: balloon once per new "gone" event -----------------------
+$WatchDirName = '评论监控'
+if ($Cfg.Dirs -and $Cfg.Dirs.Watch) { $WatchDirName = [string]$Cfg.Dirs.Watch }
+$script:watchSeen = @{}
+$watchTimer = New-Object System.Windows.Forms.Timer
+$watchTimer.Interval = 15000
+$watchTimer.add_Tick({
+    try {
+        $dir = Join-Path $DataRoot $WatchDirName
+        if (-not (Test-Path $dir)) { return }
+        foreach ($f in @(Get-ChildItem $dir -Recurse -Filter 'state.json' -File -ErrorAction SilentlyContinue)) {
+            $st = $null
+            try { $st = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
+            if (-not $st) { continue }
+            $key = [string]$st.bvid
+            $last = [string]$st.lastGoneAt
+            if (-not $last) { continue }
+            if (-not $script:watchSeen.ContainsKey($key)) { $script:watchSeen[$key] = $last; continue }
+            if ($script:watchSeen[$key] -ne $last) {
+                $script:watchSeen[$key] = $last
+                if ($st.running) {
+                    $n = @($st.recentGone).Count
+                    $tray.ShowBalloonTip(8000, 'B印象 · 评论监控', ('检测到评论消失：' + [string]$st.title + '（最近 ' + $n + ' 条）'), [System.Windows.Forms.ToolTipIcon]::Warning)
+                }
+            }
+        }
+    } catch { }
+})
+$watchTimer.Start()
 
 if (-not $NoAnimation) {
     $animTimer = New-Object System.Windows.Forms.Timer

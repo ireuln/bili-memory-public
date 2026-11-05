@@ -20,6 +20,8 @@ param(
     [switch]$Yes,
     [switch]$NoLogin,
     [switch]$NoBackup,
+    [switch]$NoDesktopShortcut,
+    [switch]$NoStartMenuShortcut,
     [switch]$Force
 )
 
@@ -149,6 +151,46 @@ if ($cfg.PSObject.Properties['Automation']) {
     $trayAnswer = Ask 'start tray icon at logon? (y/n)' 'n'
     if ($trayAnswer -match '^y') { $cfg.Automation.Startup = 'tray' } else { $cfg.Automation.Startup = 'none' }
 }
+
+# ---- shortcuts -----------------------------------------------------------
+# Optional entry points. The launcher name is CJK, so build it from code
+# points: this script is ASCII-only on purpose (see the encoding note above).
+$appName = [string][char]0x5370 + [string][char]0x8C61
+$exePath = Join-Path $Root ('bin\B' + $appName + '.exe')
+if (Test-Path $exePath) { $shortcutTarget = $exePath } else { $shortcutTarget = Join-Path $Root 'start.cmd' }
+
+function New-ProgramShortcut {
+    param([string]$LinkPath, [string]$TargetPath, [string]$WorkDir)
+    $parent = Split-Path -Parent $LinkPath
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    $sh = New-Object -ComObject WScript.Shell
+    $s = $sh.CreateShortcut($LinkPath)
+    $s.TargetPath = $TargetPath
+    $s.WorkingDirectory = $WorkDir
+    $s.Description = 'B impression - local Bilibili archive'
+    $s.Save()
+}
+
+$madeDesktop = $false
+$madeStartMenu = $false
+if (-not $NoDesktopShortcut -and ((Ask 'create a desktop shortcut? (y/n)' 'y') -match '^y')) {
+    $desk = [Environment]::GetFolderPath('Desktop')
+    if (-not $desk) { $desk = Join-Path $env:USERPROFILE 'Desktop' }
+    New-ProgramShortcut -LinkPath (Join-Path $desk ('B' + $appName + '.lnk')) -TargetPath $shortcutTarget -WorkDir $Root
+    $madeDesktop = $true
+    Write-Host 'desktop shortcut created.'
+}
+if (-not $NoStartMenuShortcut -and ((Ask 'create a start menu shortcut? (y/n)' 'y') -match '^y')) {
+    $programs = [Environment]::GetFolderPath('Programs')
+    if (-not $programs) { $programs = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs' }
+    New-ProgramShortcut -LinkPath (Join-Path (Join-Path $programs $appName) ('B' + $appName + '.lnk')) -TargetPath $shortcutTarget -WorkDir $Root
+    $madeStartMenu = $true
+    Write-Host 'start menu shortcut created.'
+}
+$shortcuts = [pscustomobject]@{ Desktop = $madeDesktop; StartMenu = $madeStartMenu }
+if ($cfg.PSObject.Properties['Shortcuts']) { $cfg.Shortcuts = $shortcuts }
+else { $cfg | Add-Member -NotePropertyName Shortcuts -NotePropertyValue $shortcuts -Force }
+
 $json = $cfg | ConvertTo-Json -Depth 10
 $cfgParent = Split-Path -Parent $ConfigFile
 if ($cfgParent -and -not (Test-Path $cfgParent)) { New-Item -ItemType Directory -Force -Path $cfgParent | Out-Null }
@@ -164,14 +206,20 @@ if ($NoLogin) {
     Write-Host 'skipped login (-NoLogin). Run collect.ps1 -Login when ready.' -ForegroundColor Yellow
 } else {
     Write-Host ''
-    Write-Host 'A dedicated browser window will open. Scan the QR code to log in to Bilibili.' -ForegroundColor Cyan
-    Write-Host 'The window closes automatically once the login is detected.' -ForegroundColor Cyan
-    if ((Ask 'continue? (y/n)' 'y') -match '^y') {
+    Write-Host 'A dedicated Edge window will open at the Bilibili login page.' -ForegroundColor Cyan
+    Write-Host 'On your phone: Bilibili app -> Me -> scan the QR code in that window.' -ForegroundColor Cyan
+    Write-Host 'Do not close the window by hand: setup closes it once the login is detected.' -ForegroundColor Cyan
+    if ((Ask 'scan the QR code now? (y/n)' 'y') -match '^y') {
         & $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root 'collect.ps1') -Login
         $code = $LASTEXITCODE
-        if ($code -ne 0) {
-            Write-Host ("login did not complete (exit {0}). Re-run: collect.ps1 -Login" -f $code) -ForegroundColor Yellow
+        if ($code -eq 0) {
+            Write-Host 'signed in.' -ForegroundColor Green
+        } else {
+            Write-Host ("login did not complete (exit {0})." -f $code) -ForegroundColor Yellow
+            Write-Host 'sign in later with: powershell -File .\collect.ps1 -Login' -ForegroundColor Yellow
         }
+    } else {
+        Write-Host 'skipped. sign in later with: powershell -File .\collect.ps1 -Login' -ForegroundColor Yellow
     }
 }
 
@@ -187,6 +235,8 @@ Write-Host '  2. favorites    :  powershell -File .\run-task.ps1 -Mode fav -Time
 Write-Host '  3. choose what is scheduled vs manual: edit config.json -> Automation'
 Write-Host '  4. apply choices:  powershell -File .\register-task.ps1 -DryRun   (then without -DryRun)'
 Write-Host '  5. tray icon    :  powershell -File .\tray.ps1   (or set Automation.Startup = "tray")'
+Write-Host '  6. first backup :  powershell -File .\backup-package.ps1 -Encrypt'
+Write-Host '  7. read data    :  powershell -File .\query.ps1 -Limit 20'
 Write-Host ''
 Write-Host 'first-time users: read docs/ (the capability doc) before relying on the output.' -ForegroundColor Cyan
 Write-Host 'setup finished.' -ForegroundColor Green

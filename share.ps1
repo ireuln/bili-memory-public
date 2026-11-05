@@ -11,11 +11,24 @@
   The post text is written next to the card as post.txt, ready to paste.
 
   Examples:
-    .\share.ps1                          # last 30 days
+    .\share.ps1                          # last 30 days, every section
     .\share.ps1 -Period 2026-10          # a calendar month
     .\share.ps1 -Period 2026             # a whole year
     .\share.ps1 -From 2026-10-01 -To 2026-10-15 -IncludeFavorites
     .\share.ps1 -Period 2026-10 -NoTitles -OnlyPack
+    .\share.ps1 -Sections topup,covers -Metrics hours,count
+    .\share.ps1 -Title 'My October' -Metrics hours -NoCovers
+
+  Sections (card layout, default all):
+    stats     metric strip      (hours / count / comp / days, see -Metrics)
+    highlight longest-watched video
+    topup     time-bucket by uploader
+    tags      section distribution
+    covers    cover wall
+
+  -Metrics picks which cells the strip shows (default all four). Metrics
+  only matter while the stats section is included. -Title overrides the big
+  headline only; the post text keeps its own wording.
 
   Privacy: the payload never contains DMs, login state, cookies or cover
   images. Titles are included by default; -NoTitles redacts them.
@@ -31,6 +44,9 @@ param(
     [string]$OutRoot = '',
     [int]$TopN = 5,
     [int]$MaxCovers = 12,
+    [string[]]$Sections = @(),
+    [string[]]$Metrics = @(),
+    [string]$Title = '',
     [switch]$NoTitles,
     [switch]$NoCovers,
     [switch]$NoPng,
@@ -111,6 +127,9 @@ $Lbl = @{
     UnknownUp     = 'unknown'
     NoHighlight   = '-'
     Footer        = 'local archive, no network, no DMs'
+    PostTopup     = 'Most time went to @{0} ({1} h).'
+    PostTags      = 'Top sections: {0}.'
+    PostHighlight = 'Longest watch: {0} ({1} min).'
 }
 if ($Cfg.Share) {
     foreach ($p in $Cfg.Share.PSObject.Properties) {
@@ -119,6 +138,35 @@ if ($Cfg.Share) {
 }
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+# ------------------------------------------------------------- composition
+# Empty arrays mean "everything", so existing callers keep the full card.
+# Values are case-insensitive and may be passed as one comma-separated string.
+$AllSections = @('stats', 'highlight', 'topup', 'tags', 'covers')
+$AllMetrics = @('hours', 'count', 'comp', 'days')
+
+function Get-Selection {
+    param([string[]]$Raw, [string[]]$Allowed, [string]$Kind)
+    if ($Raw.Count -eq 0) { return @($Allowed) }
+    $out = New-Object System.Collections.ArrayList
+    foreach ($chunk in $Raw) {
+        foreach ($piece in ([string]$chunk).Split(',')) {
+            $k = $piece.Trim().ToLowerInvariant()
+            if ($k -eq '') { continue }
+            if ($Allowed -notcontains $k) {
+                Write-Host ('ERROR: unknown ' + $Kind + ' "' + $piece + '". Use: ' + ($Allowed -join ', ') + '.')
+                exit 2
+            }
+            if (-not $out.Contains($k)) { [void]$out.Add($k) }
+        }
+    }
+    return @($out)
+}
+
+$SelSections = @(Get-Selection -Raw $Sections -Allowed $AllSections -Kind 'section')
+$SelMetrics = @(Get-Selection -Raw $Metrics -Allowed $AllMetrics -Kind 'metric')
+# Metrics only mean something while the stats section is on.
+if ($SelSections -notcontains 'stats') { $SelMetrics = @() }
 
 # Cover thumbnails usually have the title text baked into the image, so
 # redacting titles while still shipping covers would defeat the purpose.
@@ -285,16 +333,6 @@ if ($IncludeFavorites) {
 
 # ---------------------------------------------------------------- helpers
 
-function Esc {
-    param([string]$Text)
-    if ($null -eq $Text) { return '' }
-    $s = $Text.Replace('&', '&amp;')
-    $s = $s.Replace('<', '&lt;')
-    $s = $s.Replace('>', '&gt;')
-    $s = $s.Replace('"', '&quot;')
-    return $s
-}
-
 function Get-Sha256 {
     param([string]$Path)
     $algo = [System.Security.Cryptography.SHA256]::Create()
@@ -330,6 +368,8 @@ function Save-CardPng {
     try {
         $proc = Start-Process -FilePath $EdgeExe -PassThru -Wait -WindowStyle Hidden -ArgumentList @(
             '--headless=new', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=2',
+            # The card is rendered by inline JS, so let it paint before capture.
+            '--virtual-time-budget=3000',
             ('--user-data-dir=' + $ud), '--window-size=900,2400', ('--screenshot=' + $OutPng), $uri
         )
     }
@@ -439,46 +479,47 @@ else {
     $headline = $Lbl.Empty
     $lead = ''
 }
+if ($Title -ne '') { $headline = $Title }
 
-$upRows = New-Object System.Text.StringBuilder
 $maxUpSecs = 0
 if ($upSorted.Count -gt 0) { $maxUpSecs = [int64]$upSorted[0].Value.secs }
+$upData = @()
 foreach ($e in $upSorted) {
     $w = 0
     if ($maxUpSecs -gt 0) { $w = [int][math]::Round(100.0 * [int64]$e.Value.secs / $maxUpSecs) }
     if ($w -lt 2 -and $e.Value.secs -gt 0) { $w = 2 }
     $h = [math]::Round([int64]$e.Value.secs / 3600.0, 1)
-    [void]$upRows.Append('<div class="row"><span class="nm">' + (Esc $e.Key) + '</span>' +
-        '<span class="bar"><i style="width:' + $w + '%"></i></span>' +
-        '<span class="val">' + $h + 'h</span></div>')
+    $upData += [pscustomobject]@{ name = [string]$e.Key; hours = $h; pct = $w }
 }
 
-$tagRows = New-Object System.Text.StringBuilder
 $maxTag = 0
 if ($tagSorted.Count -gt 0) { $maxTag = [int]$tagSorted[0].Value }
+$tagData = @()
 foreach ($e in $tagSorted) {
     $w = 0
     if ($maxTag -gt 0) { $w = [int][math]::Round(100.0 * [int]$e.Value / $maxTag) }
     if ($w -lt 2) { $w = 2 }
-    [void]$tagRows.Append('<div class="row"><span class="nm">' + (Esc $e.Key) + '</span>' +
-        '<span class="bar t"><i style="width:' + $w + '%"></i></span>' +
-        '<span class="val">' + [int]$e.Value + '</span></div>')
+    $tagData += [pscustomobject]@{ name = [string]$e.Key; count = [int]$e.Value; pct = $w }
 }
 
 $hlTitle = $Lbl.NoHighlight
 $hlUp = ''
 $hlMeta = ''
+$hlMin = 0
+$hlData = $null
 if ($hl) {
     $hlTitle = [string]$hl.title
     if ($NoTitles) { $hlTitle = $Lbl.RedactedTitle }
     $hlUp = [string]$hl.up
     if ($hlUp -eq '') { $hlUp = $Lbl.UnknownUp }
     $mins = [int][math]::Floor([int]$hl.duration / 60)
-    $hlMeta = ([math]::Round([int64]$hlProg / 60.0, 0)).ToString() + ' / ' + $mins + ' min'
+    $hlMin = [int][math]::Round([int64]$hlProg / 60.0, 0)
+    $hlMeta = ([string]$hlMin) + ' / ' + $mins + ' min'
+    $hlData = [pscustomobject]@{ title = $hlTitle; up = $hlUp; meta = $hlMeta }
 }
 
 # covers: embedded as base64 so the card stays a single file
-$coverHtml = ''
+$coverData = @()
 if (-not $NoCovers -and $MaxCovers -gt 0) {
     $coverDir = Join-Path $DataRoot (Get-DirName $Cfg 'Cover' 'covers')
     if (Test-Path $coverDir) {
@@ -491,57 +532,52 @@ if (-not $NoCovers -and $MaxCovers -gt 0) {
                   Sort-Object -Property @{ Expression = { if ($null -eq $_.progress) { -1 } else { [int64]$_.progress } } })
         [array]::Reverse($cand)
         $picked = @($cand | Select-Object -First $MaxCovers)
-
-        $imgBuf = New-Object System.Text.StringBuilder
         foreach ($cv in $picked) {
             try {
                 $path = [string]$coverMap[[string]$cv.bvid]
                 $bytes = [System.IO.File]::ReadAllBytes($path)
                 if ($bytes.Length -gt 600000) { continue }
-                $b64 = [Convert]::ToBase64String($bytes)
-                [void]$imgBuf.Append('<img src="data:image/jpeg;base64,' + $b64 + '" alt="">')
+                $coverData += [Convert]::ToBase64String($bytes)
             }
             catch { }
         }
-        $coverHtml = $imgBuf.ToString()
     }
 }
 
+$metricsData = @()
+foreach ($m in $SelMetrics) {
+    switch ($m) {
+        'hours' { $metricsData += [pscustomobject]@{ key = 'hours'; value = [string]$hours; unit = 'h' } }
+        'count' { $metricsData += [pscustomobject]@{ key = 'count'; value = [string]$count; unit = '' } }
+        'comp' { $metricsData += [pscustomobject]@{ key = 'comp'; value = [string]$avgComp; unit = '%' } }
+        'days' { $metricsData += [pscustomobject]@{ key = 'days'; value = [string]$activeDays; unit = '' } }
+    }
+}
+
+# One data object drives the card. Section logic lives in card.html, so adding
+# a block there is a template edit rather than another branch in this script.
+$uiLang = 'zh-CN'
+if ($Cfg.UiLanguage) { $uiLang = [string]$Cfg.UiLanguage }
+$cardData = [ordered]@{
+    period    = $periodText
+    lang      = $uiLang
+    title     = $headline
+    lead      = $lead
+    sections  = @($SelSections)
+    metrics   = @($metricsData)
+    highlight = $hlData
+    up        = @($upData)
+    tags      = @($tagData)
+    covers    = @($coverData)
+    footer    = $Lbl.Footer
+    generated = $genText
+}
+
+$cardJson = ($cardData | ConvertTo-Json -Depth 6 -Compress)
+# A "<" inside a title would otherwise close the inline <script> early.
+$cardJson = $cardJson.Replace('<', '\u003c')
 $cardTpl = Join-Path $Root 'share\card.html'
-$cardMap = @{
-    TITLE     = (Esc ($headline + ' | ' + $periodText))
-    PERIOD    = (Esc $periodText)
-    HEADLINE  = (Esc $headline)
-    LEAD      = (Esc $lead)
-    M_HOURS   = $hours
-    M_COUNT   = $count
-    M_COMP    = $avgComp
-    M_DAYS    = $activeDays
-    HL_TITLE  = (Esc $hlTitle)
-    HL_UP     = (Esc $hlUp)
-    HL_META   = (Esc $hlMeta)
-    TOPUP_ROWS = $upRows.ToString()
-    TAG_ROWS  = $tagRows.ToString()
-    COVERS    = $coverHtml
-    FOOTER    = (Esc $Lbl.Footer)
-    GENERATED = $genText
-}
-
-$cardHtml = Fill ([System.IO.File]::ReadAllText($cardTpl, [System.Text.Encoding]::UTF8)) $cardMap
-
-# Drop whole sections that have no data, instead of leaving empty headings.
-$dropRules = @(
-    @{ Begin = '<!--HIGHLIGHT:BEGIN-->'; End = '<!--HIGHLIGHT:END-->'; Has = ($null -ne $hl) },
-    @{ Begin = '<!--TOPUP:BEGIN-->';     End = '<!--TOPUP:END-->';     Has = ($upSorted.Count -gt 0) },
-    @{ Begin = '<!--TAGS:BEGIN-->';      End = '<!--TAGS:END-->';      Has = ($tagSorted.Count -gt 0) },
-    @{ Begin = '<!--COVERS:BEGIN-->';    End = '<!--COVERS:END-->';    Has = ($coverHtml -ne '') }
-)
-foreach ($rule in $dropRules) {
-    if (-not $rule.Has) {
-        $pattern = [regex]::Escape($rule.Begin) + '.*?' + [regex]::Escape($rule.End)
-        $cardHtml = [regex]::Replace($cardHtml, $pattern, '', [System.Text.RegularExpressions.RegexOptions]::Singleline)
-    }
-}
+$cardHtml = [System.IO.File]::ReadAllText($cardTpl, [System.Text.Encoding]::UTF8).Replace('{{CARD_DATA}}', $cardJson)
 
 # ---------------------------------------------------------------- build post text
 
@@ -559,7 +595,24 @@ $hlTitleText = $hlTitle
 $hlMin = 0
 if ($hl) { $hlMin = [int][math]::Round([int64]$hlProg / 60.0, 0) }
 
-$postTpl = Join-Path $Root 'share\post.txt'
+# Compose the optional post lines from the same -Sections choice, so the
+# paste-ready text never mentions a block the card dropped.
+$postTopupLine = ''
+if (($SelSections -contains 'topup') -and $upSorted.Count -gt 0) {
+    $postTopupLine = ($Lbl.PostTopup -f $topUpName, $topUpHours)
+}
+if (($SelSections -contains 'tags') -and $tagSorted.Count -gt 0) {
+    $tagLine = ($Lbl.PostTags -f $topTags)
+    if ($postTopupLine -ne '') { $postTopupLine = $postTopupLine + ' ' + $tagLine }
+    else { $postTopupLine = $tagLine }
+}
+$postHlLine = ''
+if (($SelSections -contains 'highlight') -and $hl) {
+    $postHlLine = ($Lbl.PostHighlight -f $hlTitleText, $hlMin)
+}
+
+$postTplName = if ($uiLang -eq 'en-US') { 'post.en.txt' } else { 'post.txt' }
+$postTpl = Join-Path $Root ('share\' + $postTplName)
 $postMap = @{
     PERIOD      = $periodText
     DAYS        = $dayCount
@@ -571,8 +624,12 @@ $postMap = @{
     TOPTAGS     = $topTags
     HL_TITLE    = $hlTitleText
     HL_MIN      = $hlMin
+    TOPUP_LINE  = $postTopupLine
+    HL_LINE     = $postHlLine
 }
 $postText = Fill ([System.IO.File]::ReadAllText($postTpl, [System.Text.Encoding]::UTF8)) $postMap
+# Lines that were skipped leave blank runs; keep at most one blank line.
+$postText = [regex]::Replace($postText, '(\r?\n){3,}', "`r`n`r`n").Trim()
 if ($count -eq 0) { $postText = $Lbl.Empty + "`r`n`r`n" + '(' + $periodText + ')' }
 
 # ---------------------------------------------------------------- write output

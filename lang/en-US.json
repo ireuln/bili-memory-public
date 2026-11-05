@@ -4,6 +4,9 @@
     "running": "Collecting...",
     "failed": "Last run failed",
     "unknown": "Not run yet",
+    "menuData": "Data overview",
+    "menuWatch": "Comment watch",
+    "menuLogin": "Sign in with QR code",
     "menuHistory": "Collect watch history now",
     "menuFav": "Refresh favorites now",
     "menuFollow": "Refresh follows now",
@@ -16,13 +19,7 @@
     "menuHelp": "Open help",
     "menuSettings": "Features & settings",
     "menuUpdate": "Check for updates",
-    "menuExit": "Exit",
-    "menuData": "Data at a glance",
-    "menuSettingsGroup": "Settings",
-    "popupTitle": "Data at a glance",
-    "popupEmpty": "No data yet - run a collection first",
-    "popupHint": "click elsewhere to close",
-    "noLog": "no log yet"
+    "menuExit": "Exit"
   },
   "Share": {
     "Headline": "This period, I spent {0} hours on Bilibili",
@@ -31,7 +28,10 @@
     "RedactedTitle": "(title hidden)",
     "UnknownUp": "(unknown uploader)",
     "NoHighlight": "(no items to summarize in this section)",
-    "Footer": "Data comes from the local archive; no network, no DMs."
+    "Footer": "Data comes from the local archive; no network, no DMs.",
+    "PostTopup": "Most time went to @{0} ({1} h).",
+    "PostTags": "Top sections: {0}.",
+    "PostHighlight": "Longest watch: {0} ({1} min)."
   },
   "Drafts": {
     "shareLabel": "[Share] "

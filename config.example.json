@@ -3,7 +3,11 @@
   "BrowserExe": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   "ColdBackup": "D:\\bili-backup",
   "CoverWidth": 320,
+  "HdCoverWidth": 0,
   "BackupEncrypt": false,
+  "BackupCoverMode": "metadata",
+  "DesktopShortcut": false,
+  "NotifyInvalid": true,
   "UiLanguage": "zh-CN",
   "LogLevel": "normal",
   "Sound": "soft",
@@ -79,6 +83,7 @@
     "dmsSessionsFile": "会话.jsonl"
   },
   "Tray": {
+    "menuLogin": "扫码登录",
     "okPrefix": "B印象",
     "running": "正在采集…",
     "failed": "上次失败",
