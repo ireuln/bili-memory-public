@@ -25,11 +25,14 @@
 param(
     [int]$Keep = 5,
     [switch]$NoShortcut,
+    [switch]$NoToast,
     [switch]$Force,
     [switch]$Verify,
     [switch]$Encrypt,
     [ValidateSet('auto', 'zip', '7z')]
     [string]$Format = 'auto',
+    [ValidateSet('metadata', 'covers', 'hd')]
+    [string]$CoverMode = '',
     [switch]$Yes
 )
 
@@ -60,6 +63,11 @@ function CfgOr {
 }
 
 $SecretFile = Join-Path $Root 'backup-secret.json'
+# Backup content: metadata only (default), 320px covers, or HD covers.
+if (-not $CoverMode) {
+    $CoverMode = [string](CfgOr $Cfg 'BackupCoverMode' 'metadata')
+    if (@('metadata', 'covers', 'hd') -notcontains $CoverMode) { $CoverMode = 'metadata' }
+}
 $EncryptOn = $Encrypt -or [bool](CfgOr $Cfg 'BackupEncrypt' $false)
 $Password = ''
 
@@ -86,6 +94,8 @@ if ($Format -eq 'zip') {
 
 $Workspace = [string](CfgOr $Cfg 'WorkspaceRoot' (Split-Path -Parent (Split-Path -Parent $Root)))
 $DataRoot = [string](CfgOr $Cfg 'DataRoot' '')
+$CoverDirName = [string](CfgOr $Cfg.Dirs 'Cover' 'covers')
+$HdCoverName = [string](CfgOr $Cfg.Dirs 'HdCover' 'covers-hd')
 $ColdBackup = [string](CfgOr $Cfg 'ColdBackup' '')
 $OneDrive = [string](CfgOr $Cfg 'OneDrive' 'D:\OneDrive')
 $OneSub = [string](CfgOr $Cfg 'BackupSubdir' 'bili-backup')
@@ -158,7 +168,10 @@ foreach ($d in $Targets) {
 if (-not $Yes) {
     $srcBytes = 0
     $srcCount = 0
-    foreach ($name in @('History', 'Fav')) {
+    $sizeNames = @('History', 'Fav')
+    if ($CoverMode -eq 'covers') { $sizeNames += 'Cover' }
+    if ($CoverMode -eq 'hd') { $sizeNames += 'HdCover' }
+    foreach ($name in $sizeNames) {
         if (-not $Cfg.Dirs -or -not $Cfg.Dirs.$name) { continue }
         $d = Join-Path $DataRoot $Cfg.Dirs.$name
         if (-not (Test-Path $d)) { continue }
@@ -231,6 +244,32 @@ if ($DataRoot) {
         Copy-Item (Join-Path $h2 '*.md') $dst -Force -ErrorAction SilentlyContinue
         Copy-Item (Join-Path $h2 $ProgressName) $dst -Force -ErrorAction SilentlyContinue
     }
+    foreach ($pair in @(@('Dynamic', 'dynamic'), @('Follow', 'follows'))) {
+        $name = [string](CfgOr $Cfg.Dirs $pair[0] '')
+        if (-not $name) { continue }
+        $src = Join-Path $DataRoot $name
+        if (-not (Test-Path $src)) { continue }
+        $dst = Join-Path $stage ('bili\' + $pair[1])
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        Copy-Item (Join-Path $src '*') $dst -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host ('  added: ' + $pair[1])
+    }
+}
+
+# 3b. covers, only when the mode asks for them
+if ($CoverMode -ne 'metadata' -and $DataRoot) {
+    $srcName = if ($CoverMode -eq 'hd') { $HdCoverName } else { $CoverDirName }
+    $src = Join-Path $DataRoot $srcName
+    if (Test-Path $src) {
+        $dst = Join-Path $stage 'bili\covers'
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        Copy-Item (Join-Path $src '*') $dst -Recurse -Force -ErrorAction SilentlyContinue
+        $n = @(Get-ChildItem $dst -Recurse -File -ErrorAction SilentlyContinue).Count
+        Write-Host ('covers: ' + $n + ' file(s) from ' + $srcName)
+    } else {
+        Write-Host ('covers: missing ' + $src + ' (skipped)')
+        if ($CoverMode -eq 'hd') { Write-Host 'run fetch-covers-hd.ps1 first to build it' }
+    }
 }
 
 # inventory, so the archive can be checked without extracting it
@@ -281,6 +320,26 @@ function Set-DesktopShortcut {
     if ($NoShortcut) { return }
     $desk = [Environment]::GetFolderPath('Desktop')
     $lnk = Join-Path $desk $ShortcutName
+    # A shortcut that keeps coming back after the owner deletes it is noise.
+    # config.json -> "DesktopShortcut": false turns it off and removes the old one.
+    # Opt-in: the backup no longer drops a shortcut on the desktop unless the
+    # owner turns it on (config.json -> DesktopShortcut = true).
+    $enabled = $false
+    if ($null -ne $Cfg.DesktopShortcut) { $enabled = [bool]$Cfg.DesktopShortcut }
+    if (-not $enabled) {
+        if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force }
+        Write-Host 'desktop shortcut: disabled by config (DesktopShortcut=false)'
+        return
+    }
+    # Rewriting an identical link only changes its timestamp; skip it.
+    try {
+        $shOld = New-Object -ComObject WScript.Shell
+        $existing = $shOld.CreateShortcut($lnk)
+        if ($existing.TargetPath -eq $TargetFile) {
+            Write-Host 'desktop shortcut: already points at this archive'
+            return
+        }
+    } catch { }
     $sh = New-Object -ComObject WScript.Shell
     $s = $sh.CreateShortcut($lnk)
     $s.TargetPath = $TargetFile
@@ -288,6 +347,37 @@ function Set-DesktopShortcut {
     $s.Description = $(if ($UseZipFallback) { 'Bilibili archive (unencrypted ZIP).' } elseif ($EncryptOn) { 'Bilibili archive (AES-256). Password: backup-secret.json.' } else { 'Bilibili archive (unencrypted).' })
     $s.Save()
     Write-Host ("desktop shortcut: {0}" -f $lnk)
+}
+
+function Show-BackupToast {
+    # Non-modal system toast for a finished backup. Best effort: a locked-down
+    # profile or session 0 just returns $false and the backup is unaffected.
+    # The title is built from code points so this ASCII-only script stays safe
+    # under Windows PowerShell 5.1's ANSI reading of BOM-less files.
+    param([string]$Body)
+    try {
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction Stop
+        $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+        $aumid = 'Bimpression'
+        $reg = 'HKCU:\Software\Classes\AppUserModelId\' + $aumid
+        if (-not (Test-Path $reg)) {
+            New-Item -Path $reg -Force | Out-Null
+            New-ItemProperty -Path $reg -Name 'DisplayName' -Value 'Bimpression' -PropertyType String -Force | Out-Null
+        }
+        $title = 'B impression - ' + [string][char]0x5907 + [string][char]0x4EFD + [string][char]0x5B8C + [string][char]0x6210
+        $safeTitle = [System.Security.SecurityElement]::Escape($title)
+        $safeBody = [System.Security.SecurityElement]::Escape([string]$Body)
+        $xml = '<toast><visual><binding template="ToastGeneric"><text>' + $safeTitle + '</text><text>' + $safeBody + '</text></binding></visual></toast>'
+        $doc = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $doc.LoadXml($xml)
+        $toast = New-Object Windows.UI.Notifications.ToastNotification $doc
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($toast)
+        return $true
+    } catch {
+        Write-Host ('toast unavailable: ' + $_.Exception.Message)
+        return $false
+    }
 }
 
 # Content fingerprint: identical content means a new archive would only differ
@@ -363,6 +453,8 @@ foreach ($dir in $Targets) {
 }
 
 Remove-Item $stage -Recurse -Force
+$sizeText = if ($sizeKb -ge 1024) { ('{0:N1} MB' -f ($sizeKb / 1024)) } else { ('{0:N0} KB' -f $sizeKb) }
+if (-not $NoToast) { [void](Show-BackupToast -Body ($outName + ' (' + $sizeText + ')')) }
 Write-Host 'done.'
 # Explicit exit: without it, powershell.exe -File inherits the exit code of the
 # last native command (7z, or Compress-Archive's underlying call), so a

@@ -1,0 +1,6 @@
+Over the last {{DAYS}} days ({{PERIOD}}), I watched {{HOURS}} hours of Bilibili across {{COUNT}} videos, {{COMP}}% completed on average.
+
+{{TOPUP_LINE}}
+{{HL_LINE}}
+
+(Data comes from the local archive; no network, no DMs.)

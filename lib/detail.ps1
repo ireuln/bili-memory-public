@@ -35,12 +35,17 @@ function Convert-DetailRecord {
 
     $song = ''
     $music = ''
+    # Keep every visible tag, not only the auto-recognised song: the favourites
+    # mock-up shows these next to deleted entries ("what was this even about").
+    # Tags are already in this response, so this costs no extra request.
+    $tagNames = @()
     foreach ($t in @($Data.Tags)) {
         if (-not $t) { continue }
-        if ($t.tag_type -eq 'bgm') {
+        $nm = [string]$t.tag_name
+        if ($nm -and ($tagNames -notcontains $nm)) { $tagNames += $nm }
+        if ($t.tag_type -eq 'bgm' -and $song -eq '') {
             $song = [string]$t.tag_name
             $music = [string]$t.music_id
-            break
         }
     }
 
@@ -49,7 +54,10 @@ function Convert-DetailRecord {
         title      = [string]$v.title
         desc       = [string]$v.desc
         pubdate    = [int64]$(if ($v.pubdate) { $v.pubdate } else { 0 })
-        tname      = [string]$v.tname
+        tname      = [string]$(if ($v.tname) { $v.tname } elseif ($v.tname_v2) { $v.tname_v2 } else { '' })
+        tid        = [int64]$(if ($v.tid) { $v.tid } else { 0 })
+        tid_v2     = [int64]$(if ($v.tid_v2) { $v.tid_v2 } else { 0 })
+        tags       = @($tagNames)
         owner      = [string]$(if ($own) { $own.name } else { '' })
         owner_mid  = [int64]$(if ($own) { $own.mid } else { 0 })
         owner_face = [string]$(if ($own) { $own.face } else { '' })

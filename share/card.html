@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{TITLE}}</title>
+<title></title>
 <style>
 :root{
   --ink:#17171c; --dim:#70707c; --line:#e9e9f0; --bg:#f6f6fa;
@@ -28,7 +28,7 @@ body{
 .kicker{font-size:12.5px;letter-spacing:.14em;color:var(--dim)}
 h1{font-size:33px;line-height:1.25;margin:10px 0 6px;font-weight:800;letter-spacing:-.01em}
 .lead{color:var(--dim);font-size:15px;margin:0}
-.hero{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.hero{display:grid;grid-template-columns:repeat(var(--cols,4),1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
 .metric{background:#fff;padding:20px 22px}
 .metric b{display:block;font-size:30px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .metric b small{font-size:14px;font-weight:600;color:var(--dim);margin-left:2px}
@@ -57,47 +57,84 @@ h2{font-size:12.5px;letter-spacing:.12em;color:var(--dim);margin:0 0 15px;font-w
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="top">
-    <div class="kicker">BILIBILI · LOCAL ARCHIVE · {{PERIOD}}</div>
-    <h1>{{HEADLINE}}</h1>
-    <p class="lead">{{LEAD}}</p>
-  </div>
-  <div class="hero">
-    <div class="metric"><b>{{M_HOURS}}<small>h</small></b><span>累计观看</span></div>
-    <div class="metric"><b>{{M_COUNT}}</b><span>视频条数</span></div>
-    <div class="metric"><b>{{M_COMP}}<small>%</small></b><span>平均完成度</span></div>
-    <div class="metric"><b>{{M_DAYS}}</b><span>有记录的天数</span></div>
-  </div>
-  <!--HIGHLIGHT:BEGIN-->
-  <section>
-    <h2>看得最久的一条</h2>
-    <p class="hl-title">{{HL_TITLE}}</p>
-    <div class="hl-meta">{{HL_UP}} · {{HL_META}}</div>
-  </section>
-  <!--HIGHLIGHT:END-->
-  <!--TOPUP:BEGIN-->
-  <section>
-    <h2>时间花在谁身上</h2>
-    {{TOPUP_ROWS}}
-  </section>
-  <!--TOPUP:END-->
-  <!--TAGS:BEGIN-->
-  <section>
-    <h2>分区分布</h2>
-    {{TAG_ROWS}}
-  </section>
-  <!--TAGS:END-->
-  <!--COVERS:BEGIN-->
-  <section>
-    <h2>这期的封面墙</h2>
-    <div class="covers">{{COVERS}}</div>
-  </section>
-  <!--COVERS:END-->
-  <div class="foot">
-    <span>{{FOOTER}}</span>
-    <span>{{GENERATED}}</span>
-  </div>
-</div>
+<div class="card" id="card"></div>
+<script>
+(function () {
+  // The data comes in as a JSON object literal; share.ps1 escapes "<" so the
+  // engine cannot see a closing tag early. Sections and metrics are plain
+  // arrays, so adding one is a template edit plus one field on the data side.
+  var D = {{CARD_DATA}};
+
+  var EN = D.lang === 'en-US';
+  var LBL = EN
+    ? { hours: 'Hours watched', count: 'Videos', comp: 'Avg completion', days: 'Active days' }
+    : { hours: '累计观看', count: '视频条数', comp: '平均完成度', days: '有记录的天数' };
+  var TIT = EN
+    ? { highlight: 'Longest watch', topup: 'Time by uploader', tags: 'Sections', covers: 'Cover wall' }
+    : { highlight: '看得最久的一条', topup: '时间花在谁身上', tags: '分区分布', covers: '这期的封面墙' };
+
+  function arr(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  var secs = arr(D.sections);
+  function has(k) { return secs.indexOf(k) >= 0; }
+
+  var out = [];
+  out.push('<div class="top">' +
+    '<div class="kicker">BILIBILI · LOCAL ARCHIVE · ' + esc(D.period) + '</div>' +
+    '<h1>' + esc(D.title) + '</h1>' +
+    (D.lead ? '<p class="lead">' + esc(D.lead) + '</p>' : '') +
+    '</div>');
+
+  var metrics = arr(D.metrics);
+  if (has('stats') && metrics.length) {
+    out.push('<div class="hero" style="--cols:' + metrics.length + '">' + metrics.map(function (m) {
+      return '<div class="metric"><b>' + esc(m.value) +
+        (m.unit ? '<small>' + esc(m.unit) + '</small>' : '') +
+        '</b><span>' + esc(LBL[m.key] || m.key) + '</span></div>';
+    }).join('') + '</div>');
+  }
+
+  if (has('highlight') && D.highlight) {
+    out.push('<section><h2>' + TIT.highlight + '</h2>' +
+      '<p class="hl-title">' + esc(D.highlight.title) + '</p>' +
+      '<div class="hl-meta">' + esc(D.highlight.up) + ' · ' + esc(D.highlight.meta) + '</div></section>');
+  }
+
+  var up = arr(D.up);
+  if (has('topup') && up.length) {
+    out.push('<section><h2>' + TIT.topup + '</h2>' + up.map(function (r) {
+      return '<div class="row"><span class="nm">' + esc(r.name) + '</span>' +
+        '<span class="bar"><i style="width:' + r.pct + '%"></i></span>' +
+        '<span class="val">' + r.hours + 'h</span></div>';
+    }).join('') + '</section>');
+  }
+
+  var tags = arr(D.tags);
+  if (has('tags') && tags.length) {
+    out.push('<section><h2>' + TIT.tags + '</h2>' + tags.map(function (r) {
+      return '<div class="row"><span class="nm">' + esc(r.name) + '</span>' +
+        '<span class="bar t"><i style="width:' + r.pct + '%"></i></span>' +
+        '<span class="val">' + r.count + '</span></div>';
+    }).join('') + '</section>');
+  }
+
+  var covers = arr(D.covers);
+  if (has('covers') && covers.length) {
+    out.push('<section><h2>' + TIT.covers + '</h2><div class="covers">' + covers.map(function (b) {
+      return '<img src="data:image/jpeg;base64,' + b + '" alt="">';
+    }).join('') + '</div></section>');
+  }
+
+  out.push('<div class="foot"><span>' + esc(D.footer) + '</span><span>' + esc(D.generated) + '</span></div>');
+
+  document.getElementById('card').innerHTML = out.join('');
+  document.title = D.title + ' | ' + D.period;
+})();
+</script>
 </body>
 </html>

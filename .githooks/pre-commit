@@ -1,4 +1,7 @@
 #!/bin/sh
-# Block commits that contain personal identifiers or credentials.
+# Block commits that contain personal identifiers or credentials, and scripts
+# that break the BOM rule (Windows PowerShell 5.1 reads a BOM-less UTF-8 .ps1
+# as ANSI/GBK, which silently corrupts Chinese string literals).
 # Enable once with: git config core.hooksPath .githooks
-exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tools/check-secrets.ps1" -Staged
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tools/check-secrets.ps1" -Staged || exit 1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "tools/check-encoding.ps1" || exit 1
